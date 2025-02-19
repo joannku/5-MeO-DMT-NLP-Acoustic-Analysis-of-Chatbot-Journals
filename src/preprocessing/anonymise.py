@@ -170,10 +170,7 @@ def main():
     anonymizer = TextAnonymizer()
     
     # Add words to ignore
-    anonymizer.add_to_ignore_list(['god', 'ok', 'bot', 'jesus'])
-    
-    # Optional: Load additional words from file
-    # anonymizer.load_ignore_list_from_file('mysticality_dict.csv', 'Final Lexicon')
+    anonymizer.add_to_ignore_list(['John'])
     
     # Example text anonymization
     text = "John and Mary went to Paris last summer."
