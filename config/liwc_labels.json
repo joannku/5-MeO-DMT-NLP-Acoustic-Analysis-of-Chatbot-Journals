@@ -1,0 +1,131 @@
+{
+    "Drives": {
+        "Drives": "Drives (Total)",
+        "affiliation": "Affiliation",
+        "achieve": "Achievement",
+        "power": "Power"
+    },
+    "Cognition": {
+        "Cognition": "Cognition (Total)", 
+        "allnone": "All-or-none",
+        "cogproc": "Cognitive Processes",
+        "insight": "Insight",
+        "cause": "Causation",
+        "discrep": "Discrepancy",
+        "tentat": "Tentative",
+        "certitude": "Certitude",
+        "differ": "Differentiation",
+        "memory": "Memory"
+    },
+    "Affect": {
+        "Affect": "Affect (Total)",
+        "tone_pos": "Positive Tone",
+        "tone_neg": "Negative Tone", 
+        "emotion": "Emotion",
+        "emo_pos": "Positive Emotion",
+        "emo_neg": "Negative Emotion",
+        "emo_anx": "Anxiety",
+        "emo_anger": "Anger",
+        "emo_sad": "Sadness",
+        "swear": "Swear words"
+    },
+    "Social": {
+        "Social": "Social (Total)",
+        "socbehav": "Social Behavior",
+        "prosocial": "Prosocial Behavior",
+        "polite": "Politeness",
+        "conflict": "Interpersonal Conflict",
+        "moral": "Moralization",
+        "comm": "Communication",
+        "socrefs": "Social Referents",
+        "family": "Family",
+        "friend": "Friends",
+        "female": "Female References",
+        "male": "Male References"
+    },
+    "Culture": {
+        "Culture": "Culture (Total)",
+        "politic": "Politics",
+        "ethnicity": "Ethnicity",
+        "tech": "Technology"
+    },
+    "Lifestyle": {
+        "Lifestyle": "Lifestyle (Total)",
+        "leisure": "Leisure",
+        "home": "Home",
+        "money": "Money",
+        "relig": "Religion"
+    },
+    "Physical": {
+        "Physical": "Physical (Total)",
+        "health": "Health",
+        "illness": "Illness",
+        "wellness": "Wellness",
+        "mental": "Mental",
+        "substances": "Substances",
+        "sexual": "Sexual",
+        "food": "Food",
+        "death": "Death"
+    },
+    "States": {
+        "States": "States (Total)",
+        "need": "Need",
+        "want": "Want",
+        "acquire": "Acquire",
+        "lack": "Lack",
+        "fulfill": "Fulfilled",
+        "fatigue": "Fatigue"
+    },
+    "Motives": {
+        "Motives": "Motives (Total)",
+        "reward": "Reward",
+        "risk": "Risk",
+        "curiosity": "Curiosity",
+        "allure": "Allure"
+    },
+    "Perception": {
+        "Perception": "Perception (Total)",
+        "attention": "Attention",
+        "motion": "Motion",
+        "space": "Space",
+        "visual": "Visual",
+        "auditory": "Auditory",
+        "feeling": "Feeling"
+    },
+    "Conversation": {
+        "Conversation": "Conversation (Total)",
+        "netspeak": "Netspeak",
+        "assent": "Assent",
+        "nonflu": "Nonfluencies",
+        "filler": "Filler"
+    },
+    "Time": {
+        "Time": "Time (Total)",
+        "focuspast": "Past Focus",
+        "focuspresent": "Present Focus",
+        "focusfuture": "Future Focus"
+    },
+    "Pronoun": {
+        "Pronoun": "Pronoun (Total)",
+        "ppron": "Personal Pronouns",
+        "i": "1st Person Singular",
+        "we": "1st Person Plural",
+        "you": "2nd Person Singular",
+        "shehe": "3rd Person Singular",
+        "they": "3rd Person Plural",
+        "ipron": "Impersonal Pronouns"
+    },
+    "Linguistic": {
+        "det": "Determiners",
+        "article": "Articles",
+        "number": "Numbers",
+        "prep": "Prepositions",
+        "auxverb": "Auxiliary Verbs",
+        "adverb": "Adverbs",
+        "conj": "Conjunctions",
+        "negate": "Negations",
+        "verb": "Verbs",
+        "adj": "Adjectives",
+        "quantity": "Quantities"
+    }
+}

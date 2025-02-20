@@ -6,6 +6,21 @@ def integrate_sentence_level_data(df_features, df_survey_data):
     """
     # Merge sentence level data with survey data
     df_merged = pd.merge(df_features, df_survey_data, left_on='UserID', right_on='ID', how='left')
+
+    CORE_COLS = ['UserID',
+            'RecordingID',
+            'Timestamp',
+            'TimestampCorrected',
+            'RetreatDate',
+            'RelativeDate',
+            'PrePost',
+            'SentenceID',
+            'Sentence',
+            'Segment_1']
+    
+    # add liwc_ prefix to all columns except CORE_COLS and if goemo_ not in col name
+    df_merged.columns = ['liwc_' + col if col not in CORE_COLS and 'goemo_' not in col and 'survey_' not in col else col for col in df_merged.columns]
+
     return df_merged
 
 def integrate_all_means_data(df_all_means, df_survey_data):

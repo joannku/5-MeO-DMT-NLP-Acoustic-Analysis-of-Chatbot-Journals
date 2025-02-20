@@ -59,6 +59,8 @@ def get_vocal_means(df_vocal):
     
     # Continue with the rest of the function...
     vocal_features = [col for col in df_vocal.columns if col not in COLS_TO_IGNORE]
+    # I need to only select recordings between -14 and 14 (inclusive) days 
+    df_vocal = df_vocal[df_vocal['RelativeDate'].between(-14, 15)]
     pre_means = df_vocal[df_vocal['PrePost'] == 0].groupby('UserID')[vocal_features].mean()
     post_means = df_vocal[df_vocal['PrePost'] == 1].groupby('UserID')[vocal_features].mean()
 
