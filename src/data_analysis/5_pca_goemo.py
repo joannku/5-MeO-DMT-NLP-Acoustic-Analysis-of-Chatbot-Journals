@@ -544,24 +544,23 @@ class PCARegressor:
                 raise ValueError(f"Column {pc} not found in data")
         
         predictor_str = ' + '.join(predictors)
-        models = {}
+        self.full_models = {}  # Store as instance attribute
         
         for dv in dependent_vars:
             try:
                 formula = f"{dv} ~ {predictor_str}"
-                print(f"Fitting model: {formula}")  # Debug print
-                print(f"Available columns: {self.data.columns.tolist()}")  # Debug print
-                models[dv] = smf.ols(formula, data=self.data).fit()
+                print(f"Fitting model: {formula}")
+                print(f"Available columns: {self.data.columns.tolist()}")
+                self.full_models[dv] = smf.ols(formula, data=self.data).fit()
             except Exception as e:
                 print(f"Error fitting model for {dv}: {str(e)}")
                 continue
 
-           # print model summary
-        for model_name, model in models.items():
+        for model_name, model in self.full_models.items():
             print(f"\nModel: {model_name}")
             print(model.summary())
             
-        return models
+        return self.full_models
     
     def analyze_full_models(self, models, predictors):
         """Apply FDR correction across all p-values from all models."""
@@ -571,12 +570,11 @@ class PCARegressor:
         
         # First pass: collect all p-values and store results
         for model_name, model in models.items():
-            pvals = model.pvalues[1:].tolist()  # Skip intercept
+            pvals = model.pvalues[1:].tolist()
             coefs = model.params[1:].tolist()
             
-            all_pvals.extend(pvals)  # Collect all p-values
+            all_pvals.extend(pvals)
             
-            # Store results temporarily
             for pred, coef, p_orig in zip(predictors, coefs, pvals):
                 temp_results.append({
                     'Model': model_name,
@@ -587,7 +585,7 @@ class PCARegressor:
                     'Low PC State': self.pc_interpretations[pred]['Low PC State']
                 })
         
-        # Apply FDR correction across all p-values
+        # Apply FDR correction
         _, p_corrected = fdrcorrection(all_pvals, alpha=0.05)
         
         # Second pass: create final results with corrected p-values
@@ -596,10 +594,10 @@ class PCARegressor:
             result['Significant'] = p_fdr < 0.05
             results_list.append(result)
         
-        results_df = pd.DataFrame(results_list)
-        significant_results = results_df[results_df['Significant']]
+        self.results_df = pd.DataFrame(results_list)  # Store as instance attribute
+        significant_results = self.results_df[self.results_df['Significant']]
         
-        return results_df.sort_values(['Model', 'Original_P']), significant_results
+        return self.results_df.sort_values(['Model', 'Original_P']), significant_results
     
     def run_single_pc_models(self, significant_results):
         """
@@ -775,13 +773,76 @@ class PCARegressor:
         
         return fig
 
+    def create_results_table(self):
+        """
+        Create a formatted results table combining full and single PC models.
+        """
+        # Get all DVs from all_psychometrics instead of single_pc_models
+        dvs = [
+            'survey_aPPS_total',
+            'survey_EBI',
+            'survey_ASC_OBN',
+            'survey_ASC_DED',
+            'survey_bSWEBWBS'
+        ]
+        
+        # Create MultiIndex columns
+        columns = []
+        for dv in dvs:
+            columns.append((dv, 'All components'))
+            if dv in self.single_pc_models:  # Only add PC column if there's a significant relationship
+                _, pc = self.single_pc_models[dv]
+                columns.append((dv, pc))
+        
+        # Create index for metrics and PCs
+        pca_cols = [f'PC{i+1}' for i in range(3)]
+        index = ['R²', 'BIC', 'Intercept'] + [f'{pc} (p-val, FDR)' for pc in pca_cols]
+        
+        results = pd.DataFrame(index=index, columns=pd.MultiIndex.from_tuples(columns))
+        
+        # Fill in values for full models - now for ALL dvs
+        for dv in dvs:
+            if dv in self.full_models:  # Check if we have results for this DV
+                full_model = self.full_models[dv]
+                
+                results.loc['R²', (dv, 'All components')] = f"{full_model.rsquared:.3f}"
+                results.loc['BIC', (dv, 'All components')] = f"{full_model.bic:.3f}"
+                results.loc['Intercept', (dv, 'All components')] = f"{full_model.params['Intercept']:.2f}"
+                
+                for pc in pca_cols:
+                    coef = full_model.params[pc]
+                    pval = full_model.pvalues[pc]
+                    fdr = self.results_df[
+                        (self.results_df['Model'] == dv) & 
+                        (self.results_df['Component'] == pc)
+                    ]['FDR_P'].values[0]
+                    
+                    results.loc[f'{pc} (p-val, FDR)', (dv, 'All components')] = \
+                        f"{coef:.3f} ({pval:.3f}, {fdr:.3f})"
+        
+        # Fill in values for single PC models (these will only be the significant ones)
+        for dv, (model, pc) in self.single_pc_models.items():
+            results.loc['R²', (dv, pc)] = f"{model.rsquared:.3f}"
+            results.loc['BIC', (dv, pc)] = f"{model.bic:.3f}"
+            results.loc['Intercept', (dv, pc)] = f"{model.params['Intercept']:.2f}"
+            
+            fdr = self.final_results[
+                (self.final_results['Model'] == dv) & 
+                (self.final_results['Component'] == pc)
+            ]['FDR_P'].values[0]
+            
+            results.loc[f'{pc} (p-val, FDR)', (dv, pc)] = \
+                f"{model.params[pc]:.3f} ({model.pvalues[pc]:.3f}, {fdr:.3f})"
+        
+        return results
+
 ########################################################
 #################### PCA analysis ######################
 ########################################################
 
 CORE_DIR = '/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals'
 
-PSYCHOMETRICS = ['aPPS_total', 'EBI', 'ASC_OBN', 'bSWEBWBS', 'ASC_DED']
+PSYCHOMETRICS = ['aPPS_total', 'EBI', 'ASC_OBN', 'ASC_DED', 'bSWEBWBS']
 PSYCHOMETRICS = [f'survey_{psych}' for psych in PSYCHOMETRICS]
 
 df = pd.read_csv(f'{CORE_DIR}/data/final/means_level.csv')
@@ -872,42 +933,39 @@ regressor = PCARegressor(data=pca_data, pc_interpretations=PC_INTERPRETATIONS)
 # Define dependent variables (questionnaire items)
 pca_cols = [f'PC{i+1}' for i in range(3)]
 
-# Step 1: Run full models
-full_models = regressor.run_full_models(PSYCHOMETRICS, pca_cols)
-
-# Step 2: Analyze full models and get significant components
-results_df, significant_results = regressor.analyze_full_models(full_models, pca_cols)
-
-# Step 3: Run single PC models for significant components
-single_pc_models, final_results = regressor.run_single_pc_models(significant_results)
-
-# Display results
-print("\nFull Model Results:")
-display(results_df)
-print("\nSignificant Components from Full Models:")
-display(significant_results)
-print("\nFinal Single PC Model Results:")
-display(final_results)
-
-# Save results to CSV
-results_df.to_csv(f'{CORE_DIR}/outputs/tables/pca_full_model_results.csv', index=False)
-significant_results.to_csv(f'{CORE_DIR}/outputs/tables/pca_significant_components.csv', index=False)
-final_results.to_csv(f'{CORE_DIR}/outputs/tables/pca_single_pc_model_results.csv', index=False)
-
-# NEW CODE: Create relationship plots
+# Define relationships for visualization (significant ones)
 relationships = [
     ('PC1', 'survey_aPPS_total', 'Psychedelic Preparedness', 'PPS Score', 0),
     ('PC1', 'survey_bSWEBWBS', 'Post-Experience Psychological Wellbeing', 'sWEMWBS Score', 1),
     ('PC3', 'survey_EBI', 'Emotional Breakthrough', 'EBI Score', 2),
-
 ]
 
-# Create and save plots
+# Define all relationships for the table
+all_psychometrics = [
+    'survey_aPPS_total',
+    'survey_EBI',
+    'survey_ASC_OBN',
+    'survey_ASC_DED',
+    'survey_bSWEBWBS'
+]
+
+# Run models for all relationships first
+full_models = regressor.run_full_models(all_psychometrics, pca_cols)
+results_df, significant_results = regressor.analyze_full_models(full_models, pca_cols)
+single_pc_models, final_results = regressor.run_single_pc_models(significant_results)
+
+# Now create and save plots for significant relationships
 regressor.create_relationship_plots(
     data=pca_data,
     relationships=relationships,
     save_path=f'{CORE_DIR}/outputs/figures/pc_relationships.png'
 )
+
+# Create results table with ALL relationships
+results_table = regressor.create_results_table()
+print("\nResults Table (All Relationships):")
+display(results_table)
+results_table.to_csv(f'{CORE_DIR}/outputs/tables/pca_results_table.csv')
 
 # %%
 

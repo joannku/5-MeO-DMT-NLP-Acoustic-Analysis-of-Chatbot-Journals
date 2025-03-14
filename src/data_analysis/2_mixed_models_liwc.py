@@ -1,20 +1,8 @@
 import pandas as pd
-import os
 import numpy as np
-import pandas as pd
-import seaborn as sns
-from scipy import stats
-from scipy.stats import ttest_rel, mannwhitneyu, pearsonr
+import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 import statsmodels.stats.multitest as smm
-from statsmodels.regression.mixed_linear_model import MixedLM
-from statsmodels.stats.multitest import fdrcorrection, multipletests
-from nltk.tokenize import sent_tokenize
-import statsmodels.api as sm
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
-from sklearn.utils import resample
-import warnings
 import json
 
 def filter_df(df):
@@ -62,6 +50,7 @@ def run_mixed_effect_models(df, label_dict):
                 
             model = smf.mixedlm(f"{liwc_col} ~ PrePost", subset, groups=subset['UserID'])
             result = model.fit(method='nm', maxiter=1000)
+            print(result.summary())
             
             coef = result.params["PrePost"]
             p_value = result.pvalues["PrePost"]
@@ -140,7 +129,7 @@ def plot_mixed_effects_results(results_dict, label_dict, filename='mixed_effects
     error_bars = np.array(error_bars).T
 
     # Create plot with adjusted layout
-    fig, ax = plt.subplots(figsize=(10, 12))
+    fig, ax = plt.subplots(figsize=(6, 10))
     fig.subplots_adjust(left=0.5, right=0.8)  # Make space for category labels
 
     # Plot horizontal bars
@@ -177,17 +166,16 @@ def plot_mixed_effects_results(results_dict, label_dict, filename='mixed_effects
             significance = ''
         
         if significance:
-            # x = coefficients[i] + (0.5 if coefficients[i] > 0 else -0.5)
-            x = coefficients[i] + (error_bars[1][i] - error_bars[0][i]) / 2
-            # move a little up
-            y = i + 0.1
-            # if negative, move to the left
+            # Calculate position based on error bar ends
             if coefficients[i] < 0:
-                x = x - 0.2
-            # if positive, move to the right
-            elif coefficients[i] > 0:
-                x = x + 0.2
-            # ax.text(x, i, significance, va='center', ha='center', fontsize=12, color='black')
+                # For negative coefficients, place near the left error bar end
+                x = coefficients[i] - error_bars[0][i]
+            else:
+                # For positive coefficients, place near the right error bar end
+                x = coefficients[i] + error_bars[1][i]
+            
+            # move a little up
+            y = i + 0.2
             ax.text(x, y, significance, va='center', ha='center', fontsize=12, color='black')
 
     # Main category grouping
@@ -206,13 +194,12 @@ def plot_mixed_effects_results(results_dict, label_dict, filename='mixed_effects
     bracket_pairs.append((group_start, len(sorted_results)-1, current_category))
 
     # Draw brackets and category labels
-    # Draw brackets and category labels
     for start, end, category in bracket_pairs:
         # Vertical positioning
         y_pos = (start + end) / 2
 
         # Define an x position **outside** the plot (relative to the axis)
-        x_pos = -0.3  # Negative values move left, fine-tune as needed
+        x_pos = -0.6  # Negative values move left, fine-tune as needed
 
         # Use `ax.transAxes` to place it in figure-relative space
         ax.plot([x_pos, x_pos], [start-0.2, end+0.2], color=category_colors[category], 
@@ -229,12 +216,10 @@ def plot_mixed_effects_results(results_dict, label_dict, filename='mixed_effects
                 ha='right', va='center', fontsize=12, fontweight='bold',
                 transform=ax.get_yaxis_transform(), clip_on=False)
 
-
-
     # Final styling
-    ax.set_xlabel('Estimated Average Difference in Vocabulary Categories\n(Pre- to Post- 5-MeO-DMT, %)', fontsize=12)
+    ax.set_xlabel('Estimated Average Difference \nin Vocabulary Categories\n(Pre- to Post- 5-MeO-DMT, %)', fontsize=10)
     ax.axvline(0, color='gray', linewidth=0.5, linestyle='-')
-    ax.set_xlim(-3.1, 3.1)
+    ax.set_xlim(-3.2, 3.2)
 
     plt.tight_layout()
     plt.savefig(filename, dpi=1000, bbox_inches='tight')
@@ -301,6 +286,35 @@ def export_mlm_results(results_dict, label_dict, filename='mlm_results.csv'):
     
     return results_df
 
+def save_significant_categories(results_dict, filename='config/mlm_sig_cats.txt'):
+    """
+    Save categories that showed significant changes (p < 0.05 after correction) to a text file.
+    
+    Parameters:
+    -----------
+    results_dict : dict
+        Dictionary containing the MLM results
+    filename : str
+        Path to output file (default: 'config/mlm_sig_cats.txt')
+    """
+    # Get significant categories
+    sig_cats = []
+    for category, results in results_dict.items():
+        if results['Corrected P-Value'] < 0.05:
+            # Store category name without 'liwc_' prefix
+            sig_cats.append(category)
+    
+    # Sort alphabetically
+    sig_cats.sort()
+    
+    # Save to file
+    with open(filename, 'w') as f:
+        for cat in sig_cats:
+            f.write(f"{cat}\n")
+    
+    print(f"Saved {len(sig_cats)} significant categories to {filename}")
+    return sig_cats
+
 if __name__ == '__main__':
 
     CORE_DIR = '/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals'
@@ -322,7 +336,7 @@ if __name__ == '__main__':
     print(RESULTS_DICT)
 
     # After getting results_dict
-    fig, ax = plot_mixed_effects_results(RESULTS_DICT, LABEL_DICT, f"{CORE_DIR}/outputs/figures/mixed_effects_results.png")
+    fig, ax = plot_mixed_effects_results(RESULTS_DICT, LABEL_DICT, f"{CORE_DIR}/outputs/figures/mixed_effects_liwc_results.png")
 
     # Export results to CSV
     results_df = export_mlm_results(
@@ -331,3 +345,11 @@ if __name__ == '__main__':
         f"{CORE_DIR}/outputs/tables/mlm_results.csv"
     )
     print("Results exported to CSV")
+
+    # Save significant categories
+    sig_cats = save_significant_categories(
+        RESULTS_DICT, 
+        f"{CORE_DIR}/config/mlm_sig_cats.txt"
+    )
+
+

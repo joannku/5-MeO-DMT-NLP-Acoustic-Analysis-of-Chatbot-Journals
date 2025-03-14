@@ -47,7 +47,7 @@ def summary_plot(df, export_path):
 
     # Plot: Histogram of the number of sentences submitted per day relative to the retreat
     plt.subplot(1, 2, 2)  # Two rows, one column, first plot
-    sns.histplot(df['RelativeDate'], bins=10, kde=False, color='cornflowerblue')
+    sns.histplot(df['RelativeDate'], bins=10, kde=True, color='cornflowerblue')
     plt.title('Distribution of Sentences Submitted \nby Day Relative to 5-MeO-DMT Session\n')
     plt.xlabel('Days Before / After 5-MeO-DMT Dosing (Day 0)')
     plt.ylabel('Number of Sentences Submitted')
@@ -84,12 +84,13 @@ def summary_plot(df, export_path):
 
     plt.show()
 
-
 if __name__ == '__main__':  
 
     CORE_DIR = '/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/'
 
     df = pd.read_csv(f'{CORE_DIR}/data/final/sentence_level.csv')
+    # for this plot, all RelativeDate equal to -0.5 or 0.5 should be changed to 0 
+    df['RelativeDate'] = df['RelativeDate'].apply(lambda x: 0 if x == -0.5 or x == 0.5 else x)
     summary_plot(df, f'{CORE_DIR}/outputs/figures/summary_statistics.png')
    
     mean_recordings_per_user = df.groupby('UserID')['RecordingID'].nunique().mean()

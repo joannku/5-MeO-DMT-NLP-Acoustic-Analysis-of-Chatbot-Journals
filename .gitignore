@@ -47,6 +47,7 @@ data/processed/*
 outputs/figures/*
 outputs/tables/*
 !outputs/figures/.gitkeep
+src/drafts/*
 
 
 # Jupyter Notebook
