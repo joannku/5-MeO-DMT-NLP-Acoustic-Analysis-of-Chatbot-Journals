@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind
 from scipy.ndimage import gaussian_filter1d
 from statsmodels.stats.multitest import multipletests
+import os
+import re
+from collections import defaultdict
+from wordcloud import WordCloud
 
 def load_data(sentence_level_path):
     """
@@ -159,7 +163,7 @@ def aggregate_daily_word_usage(daily_usage_df, feature_col):
     
     return agg_daily.sort_values('RelativeDate')
 
-def calculate_period_statistics(daily_usage_df, feature_col):
+def calculate_period_statistics(daily_usage_df, feature_col, agg_daily_df=None):
     """
     Calculate statistics for different periods around the dosing.
     
@@ -169,6 +173,8 @@ def calculate_period_statistics(daily_usage_df, feature_col):
         The dataframe with daily word usage values
     feature_col : str
         Column name of the feature to analyze
+    agg_daily_df : pandas.DataFrame, optional
+        Dataframe with aggregated data including user counts to filter out days with insufficient data
         
     Returns:
     --------
@@ -184,6 +190,13 @@ def calculate_period_statistics(daily_usage_df, feature_col):
         'Week +1 (0 to 7)': (0, 7),
         'Week +2 (7 to 14)': (7, 14)
     }
+    
+    # Filter out days with only one user if agg_daily_df is provided
+    if agg_daily_df is not None:
+        # Get days with more than one user
+        valid_days = agg_daily_df[agg_daily_df['count'] > 1]['RelativeDate'].values
+        # Filter daily_usage_df to only include those days
+        daily_usage_df = daily_usage_df[daily_usage_df['RelativeDate'].isin(valid_days)].copy()
     
     # Calculate statistics for each period
     period_stats = {}
@@ -204,7 +217,7 @@ def calculate_period_statistics(daily_usage_df, feature_col):
     
     return period_stats, periods
 
-def pairwise_period_comparisons(daily_usage_df, periods, feature_col):
+def pairwise_period_comparisons(daily_usage_df, periods, feature_col, agg_daily_df=None):
     """
     Perform pairwise t-tests between periods.
     
@@ -216,12 +229,21 @@ def pairwise_period_comparisons(daily_usage_df, periods, feature_col):
         Dictionary with period definitions
     feature_col : str
         Column name of the feature to analyze
+    agg_daily_df : pandas.DataFrame, optional
+        Dataframe with aggregated data including user counts to filter out days with insufficient data
         
     Returns:
     --------
     list
         List of dictionaries with comparison results
     """
+    # Filter out days with only one user if agg_daily_df is provided
+    if agg_daily_df is not None:
+        # Get days with more than one user
+        valid_days = agg_daily_df[agg_daily_df['count'] > 1]['RelativeDate'].values
+        # Filter daily_usage_df to only include those days
+        daily_usage_df = daily_usage_df[daily_usage_df['RelativeDate'].isin(valid_days)].copy()
+    
     # Get all period names
     period_names = list(periods.keys())
     
@@ -306,9 +328,93 @@ def print_detailed_statistics(comparisons, feature_name):
         print(f"    Mean: {mean1:.2f} vs {mean2:.2f}")
         print(f"    t = {t_stat:.2f}, p = {p_val:.4f}, p-fdr = {p_fdr:.4f} {significance}")
 
-def plot_combined_time_series(agg_daily_cog, agg_daily_social, periods, output_path=None):
+def create_daily_stats_table(agg_daily_cog, agg_daily_social, output_path=None):
     """
-    Plot time series of cognitive and social word usage with period shading and a break at dosing time.
+    Create a table with daily means and user counts.
+    
+    Parameters:
+    -----------
+    agg_daily_cog : pandas.DataFrame
+        Dataframe with aggregated daily cognitive word usage
+    agg_daily_social : pandas.DataFrame
+        Dataframe with aggregated daily social word usage
+    output_path : str, optional
+        Path to save the output table
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame containing the daily statistics
+    """
+    # Merge cognitive and social dataframes on RelativeDate
+    daily_stats = pd.merge(
+        agg_daily_cog[['RelativeDate', 'mean', 'count']],
+        agg_daily_social[['RelativeDate', 'mean', 'count']],
+        on='RelativeDate',
+        suffixes=('_cog', '_social'),
+        how='outer'
+    )
+    
+    # Reorder columns for better readability
+    daily_stats = daily_stats[['RelativeDate', 'mean_cog', 'count_cog', 'mean_social', 'count_social']]
+    
+    # Rename columns for clarity
+    daily_stats.columns = ['Day', 'Cognitive Mean', 'Cognitive Users', 'Social Mean', 'Social Users']
+    
+    # Filter to only include full days and special half days (-0.5 and 0.5)
+    daily_stats = daily_stats[
+        (daily_stats['Day'].apply(lambda x: x.is_integer())) | 
+        (daily_stats['Day'] == -0.5) | 
+        (daily_stats['Day'] == 0.5)
+    ]
+    
+    # Sort by day
+    daily_stats = daily_stats.sort_values('Day')
+    
+    # Save to CSV if output path is provided
+    if output_path:
+        daily_stats.to_csv(f"{output_path}_daily_stats.csv", index=False)
+        
+        # Also create a formatted text table
+        with open(f"{output_path}_daily_stats.txt", 'w') as f:
+            f.write("Daily Statistics for Cognitive and Social Word Usage\n")
+            f.write("==================================================\n\n")
+            f.write(f"{'Day':>5} | {'Cognitive Mean':>15} | {'Cognitive Users':>15} | {'Social Mean':>15} | {'Social Users':>15}\n")
+            f.write(f"{'-'*5} | {'-'*15} | {'-'*15} | {'-'*15} | {'-'*15}\n")
+            
+            for _, row in daily_stats.iterrows():
+                day = row['Day']
+                
+                # Handle potentially NaN values
+                if pd.isna(row['Cognitive Mean']):
+                    cog_mean_str = "N/A".rjust(15)
+                else:
+                    cog_mean_str = f"{row['Cognitive Mean']:15.3f}"
+                    
+                if pd.isna(row['Cognitive Users']):
+                    cog_users_str = "N/A".rjust(15)
+                else:
+                    cog_users_str = f"{int(row['Cognitive Users']):15d}"
+                    
+                if pd.isna(row['Social Mean']):
+                    social_mean_str = "N/A".rjust(15)
+                else:
+                    social_mean_str = f"{row['Social Mean']:15.3f}"
+                    
+                if pd.isna(row['Social Users']):
+                    social_users_str = "N/A".rjust(15)
+                else:
+                    social_users_str = f"{int(row['Social Users']):15d}"
+                
+                f.write(f"{day:5.1f} | {cog_mean_str} | {cog_users_str} | {social_mean_str} | {social_users_str}\n")
+    
+    return daily_stats
+
+def plot_combined_visualization(agg_daily_cog, agg_daily_social, periods, daily_cognition=None, 
+                               daily_social=None, period_stats_cog=None, period_stats_social=None, 
+                               comparisons_cog=None, comparisons_social=None, output_path=None):
+    """
+    Create a single combined visualization with time series, word clouds, and bar charts.
     
     Parameters:
     -----------
@@ -318,147 +424,17 @@ def plot_combined_time_series(agg_daily_cog, agg_daily_social, periods, output_p
         Dataframe with aggregated daily social word usage
     periods : dict
         Dictionary with period definitions
-    output_path : str, optional
-        Path to save the output figure
-    
-    Returns:
-    --------
-    tuple
-        Tuple containing the figure and axis
-    """
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Split data into pre and post dosing segments to create a break for cognitive words
-    # Filter out NaN values to avoid plotting gaps
-    pre_dosing_cog = agg_daily_cog[(agg_daily_cog['RelativeDate'] <= -0.5) & (~agg_daily_cog['smoothed_mean'].isna())]
-    post_dosing_cog = agg_daily_cog[(agg_daily_cog['RelativeDate'] >= 0.5) & (~agg_daily_cog['smoothed_mean'].isna())]
-    
-    # Split data into pre and post dosing segments to create a break for social words
-    # Filter out NaN values to avoid plotting gaps
-    pre_dosing_social = agg_daily_social[(agg_daily_social['RelativeDate'] <= -0.5) & (~agg_daily_social['smoothed_mean'].isna())]
-    post_dosing_social = agg_daily_social[(agg_daily_social['RelativeDate'] >= 0.5) & (~agg_daily_social['smoothed_mean'].isna())]
-    
-    # Plot pre-dosing segment for cognitive words
-    if not pre_dosing_cog.empty:
-        ax.plot(pre_dosing_cog['RelativeDate'], pre_dosing_cog['smoothed_mean'], 
-                color='purple', linewidth=2, label='Cognitive Word Usage')
-        
-        # Add confidence interval for pre-dosing cognitive words
-        ax.fill_between(
-            pre_dosing_cog['RelativeDate'],
-            pre_dosing_cog['smoothed_mean'] - pre_dosing_cog['se'],
-            pre_dosing_cog['smoothed_mean'] + pre_dosing_cog['se'],
-            color='purple', alpha=0.2
-        )
-    
-    # Plot post-dosing segment for cognitive words
-    if not post_dosing_cog.empty:
-        ax.plot(post_dosing_cog['RelativeDate'], post_dosing_cog['smoothed_mean'], 
-                color='purple', linewidth=2, label=None if not pre_dosing_cog.empty else 'Cognitive Word Usage')
-        
-        # Add confidence interval for post-dosing cognitive words
-        ax.fill_between(
-            post_dosing_cog['RelativeDate'],
-            post_dosing_cog['smoothed_mean'] - post_dosing_cog['se'],
-            post_dosing_cog['smoothed_mean'] + post_dosing_cog['se'],
-            color='purple', alpha=0.2
-        )
-    
-    # Plot pre-dosing segment for social words
-    if not pre_dosing_social.empty:
-        ax.plot(pre_dosing_social['RelativeDate'], pre_dosing_social['smoothed_mean'], 
-                color='green', linewidth=2, label='Social Word Usage')
-        
-        # Add confidence interval for pre-dosing social words
-        ax.fill_between(
-            pre_dosing_social['RelativeDate'],
-            pre_dosing_social['smoothed_mean'] - pre_dosing_social['se'],
-            pre_dosing_social['smoothed_mean'] + pre_dosing_social['se'],
-            color='green', alpha=0.2
-        )
-    
-    # Plot post-dosing segment for social words
-    if not post_dosing_social.empty:
-        ax.plot(post_dosing_social['RelativeDate'], post_dosing_social['smoothed_mean'], 
-                color='green', linewidth=2, label=None if not pre_dosing_social.empty else 'Social Word Usage')
-        
-        # Add confidence interval for post-dosing social words
-        ax.fill_between(
-            post_dosing_social['RelativeDate'],
-            post_dosing_social['smoothed_mean'] - post_dosing_social['se'],
-            post_dosing_social['smoothed_mean'] + post_dosing_social['se'],
-            color='green', alpha=0.2
-        )
-    
-    # Add vertical line at day 0 (dosing)
-    ax.axvline(x=0, color='black', linestyle='--', alpha=0.7, label='Dosing Day')
-    
-    # Define colors for periods
-    period_colors = {
-        'Week -2 (-14 to -7)': 'lightgray',
-        'Week -1 (-7 to 0)': 'lightgreen',
-        'Week +1 (0 to 7)': 'paleturquoise',
-        'Week +2 (7 to 14)': 'lavender'
-    }
-    
-    # Add period shading
-    for period_name, (start, end) in periods.items():
-        ax.axvspan(start, end, alpha=0.3, color=period_colors[period_name], label=period_name)
-    
-    # Add labels and title
-    ax.set_xlabel('Days Relative to Dosing', fontsize=12)
-    ax.set_ylabel('Word Usage (Standard Deviations from Individual Mean)', fontsize=12)
-    ax.set_title('Temporal Evolution of Cognitive and Social Word Usage Around 5-MeO-DMT Dosing', fontsize=14)
-    
-    # Add horizontal line at y=0 to represent individual baseline
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.5, linewidth=1)
-    
-    # Add grid
-    ax.grid(True, alpha=0.3)
-    
-    # Find and mark peak days, but only if we have valid data
-    if not agg_daily_cog['smoothed_mean'].isna().all():
-        valid_cog = agg_daily_cog[~agg_daily_cog['smoothed_mean'].isna()]
-        cog_peak_date = valid_cog.loc[valid_cog['smoothed_mean'].idxmax(), 'RelativeDate']
-        cog_peak_value = valid_cog['smoothed_mean'].max()
-        ax.scatter(cog_peak_date, cog_peak_value, color='purple', s=100, zorder=5, 
-                  label=f'Cognitive Peak (Day {cog_peak_date})')
-    
-    if not agg_daily_social['smoothed_mean'].isna().all():
-        valid_social = agg_daily_social[~agg_daily_social['smoothed_mean'].isna()]
-        social_peak_date = valid_social.loc[valid_social['smoothed_mean'].idxmax(), 'RelativeDate']
-        social_peak_value = valid_social['smoothed_mean'].max()
-        ax.scatter(social_peak_date, social_peak_value, color='green', s=100, zorder=5, 
-                  label=f'Social Peak (Day {social_peak_date})')
-    
-    # Add legend - place it outside the plot for better visibility
-    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
-    
-    # Set x-axis limits to focus on the period of interest
-    ax.set_xlim(-14.5, 14.5)
-    
-    plt.tight_layout()
-    
-    # Save the figure if output path is provided
-    if output_path:
-        fig.savefig(output_path, bbox_inches='tight')
-    
-    return fig, ax
-
-def plot_period_comparison(period_stats_cog, period_stats_social, comparisons_cog, comparisons_social, output_path=None):
-    """
-    Plot bar chart comparing cognitive and social word usage across periods.
-    
-    Parameters:
-    -----------
-    period_stats_cog : dict
+    daily_cognition : pandas.DataFrame, optional
+        Dataframe with individual user daily cognitive word usage
+    daily_social : pandas.DataFrame, optional
+        Dataframe with individual user daily social word usage
+    period_stats_cog : dict, optional
         Dictionary with period statistics for cognitive words
-    period_stats_social : dict
+    period_stats_social : dict, optional
         Dictionary with period statistics for social words
-    comparisons_cog : list
+    comparisons_cog : list, optional
         List of dictionaries with comparison results for cognitive words
-    comparisons_social : list
+    comparisons_social : list, optional
         List of dictionaries with comparison results for social words
     output_path : str, optional
         Path to save the output figure
@@ -468,147 +444,367 @@ def plot_period_comparison(period_stats_cog, period_stats_social, comparisons_co
     tuple
         Tuple containing the figure and axes
     """
-    # Create figure with two subplots side by side
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    # Create figure with 3 rows and 2 columns with specific height ratios
+    fig = plt.figure(figsize=(14, 14))
     
-    # Plot for cognitive words
-    periods = list(period_stats_cog.keys())
-    means_cog = [stats['mean'] for stats in period_stats_cog.values()]
-    errors_cog = [stats['se'] for stats in period_stats_cog.values()]
+    # Create a gridspec with control over spacing and heights
+    gs = fig.add_gridspec(4, 2, height_ratios=[2,2,2, 2], hspace=0.3, wspace=0.3)
     
-    # Create color array based on values (positive or negative)
-    colors_cog = ['purple']
+    # Create axes using the gridspec
+    ax_timeseries = fig.add_subplot(gs[:2, :])  # Top row - time series (spans both columns)
+    ax_wordcloud_cog = fig.add_subplot(gs[2, 0])  # Middle row, left - cognitive wordcloud
+    ax_wordcloud_soc = fig.add_subplot(gs[2, 1])  # Middle row, right - social wordcloud
+    ax_bar_cog = fig.add_subplot(gs[3, 0])  # Bottom row, left - cognitive bar chart
+    ax_bar_soc = fig.add_subplot(gs[3, 1])  # Bottom row, right - social bar chart
     
-    bars1 = ax1.bar(range(len(periods)), means_cog, yerr=errors_cog, capsize=5, 
-                   color=colors_cog, alpha=0.7, edgecolor='purple')
+    # Define custom colors with slightly darker variants for certain elements
+    cog_color = '#1f77b4'  # Rich medium blue for cognitive words
+    social_color = '#d62728'  # Deep red for social words
     
-    # Add significance bars for cognitive word comparisons
-    min_y = min(means_cog) - max(errors_cog) * 2
-    max_y = max(means_cog) + max(errors_cog) * 2
+    # Filter out days with insufficient data (count <= 1) for line plots only
+    agg_daily_cog_filtered = agg_daily_cog[agg_daily_cog['count'] > 1].copy()
+    agg_daily_social_filtered = agg_daily_social[agg_daily_social['count'] > 1].copy()
     
-    # If all values have the same sign, ensure zero is included
-    if min_y > 0:
-        min_y = 0
-    if max_y < 0:
-        max_y = 0
+    # Split data into pre and post dosing segments to create a break for cognitive words
+    # Filter out NaN values to avoid plotting gaps
+    pre_dosing_cog = agg_daily_cog_filtered[(agg_daily_cog_filtered['RelativeDate'] <= -0.5) & 
+                                           (~agg_daily_cog_filtered['smoothed_mean'].isna())]
+    post_dosing_cog = agg_daily_cog_filtered[(agg_daily_cog_filtered['RelativeDate'] >= 0.5) & 
+                                            (~agg_daily_cog_filtered['smoothed_mean'].isna())]
+    
+    # Split data into pre and post dosing segments to create a break for social words
+    # Filter out NaN values to avoid plotting gaps
+    pre_dosing_social = agg_daily_social_filtered[(agg_daily_social_filtered['RelativeDate'] <= -0.5) & 
+                                                 (~agg_daily_social_filtered['smoothed_mean'].isna())]
+    post_dosing_social = agg_daily_social_filtered[(agg_daily_social_filtered['RelativeDate'] >= 0.5) & 
+                                                  (~agg_daily_social_filtered['smoothed_mean'].isna())]
+    
+    # Plot all individual data points from all users if provided - with slightly higher opacity
+    if daily_cognition is not None:
+        # Show all individual data points with increased opacity
+        ax_timeseries.scatter(daily_cognition['RelativeDate'], daily_cognition['CogDeviation'], 
+                  color=cog_color, alpha=0.3, s=15, label='Individual Cognitive Data Points')
+    
+    if daily_social is not None:
+        # Show all individual data points with increased opacity
+        ax_timeseries.scatter(daily_social['RelativeDate'], daily_social['SocialDeviation'], 
+                  color=social_color, alpha=0.3, s=15, label='Individual Social Data Points')
+    
+    # Plot pre-dosing segment for cognitive words with increased line width
+    if not pre_dosing_cog.empty:
+        ax_timeseries.plot(pre_dosing_cog['RelativeDate'], pre_dosing_cog['smoothed_mean'], 
+                color=cog_color, linewidth=2.5, label='Cognitive Word Usage (Smoothed)')
         
-    bar_height = (max_y - min_y) * 0.05
+        # Add confidence interval for pre-dosing cognitive words with increased opacity
+        ax_timeseries.fill_between(
+            pre_dosing_cog['RelativeDate'],
+            pre_dosing_cog['smoothed_mean'] - pre_dosing_cog['se'],
+            pre_dosing_cog['smoothed_mean'] + pre_dosing_cog['se'],
+            color=cog_color, alpha=0.3
+        )
     
-    # Start significance bars from the top of the highest bar
-    y_pos = max_y + bar_height
+    # Plot post-dosing segment for cognitive words with increased line width
+    if not post_dosing_cog.empty:
+        ax_timeseries.plot(post_dosing_cog['RelativeDate'], post_dosing_cog['smoothed_mean'], 
+                color=cog_color, linewidth=2.5, label=None if not pre_dosing_cog.empty else 'Cognitive Word Usage (Smoothed)')
+        
+        # Add confidence interval for post-dosing cognitive words with increased opacity
+        ax_timeseries.fill_between(
+            post_dosing_cog['RelativeDate'],
+            post_dosing_cog['smoothed_mean'] - post_dosing_cog['se'],
+            post_dosing_cog['smoothed_mean'] + post_dosing_cog['se'],
+            color=cog_color, alpha=0.3
+        )
     
-    for comp in comparisons_cog:
-        if comp['p-value-fdr'] < 0.05:  # Only show significant comparisons
-            idx1 = periods.index(comp['Period 1'])
-            idx2 = periods.index(comp['Period 2'])
-            
-            # Draw the line
-            ax1.plot([idx1, idx2], [y_pos, y_pos], color='black', linewidth=1.5)
-            
-            # Add significance stars
-            if comp['p-value-fdr'] < 0.001:
-                stars = '***'
-            elif comp['p-value-fdr'] < 0.01:
-                stars = '**'
-            else:
-                stars = '*'
-                
-            ax1.text((idx1 + idx2)/2, y_pos + bar_height*0.2, stars, 
-                    ha='center', va='bottom', color='black')
-            
-            y_pos += bar_height * 1.5  # Increment for next bar
+    # Plot pre-dosing segment for social words with increased line width
+    if not pre_dosing_social.empty:
+        ax_timeseries.plot(pre_dosing_social['RelativeDate'], pre_dosing_social['smoothed_mean'], 
+                color=social_color, linewidth=2.5, label='Social Word Usage (Smoothed)')
+        
+        # Add confidence interval for pre-dosing social words with increased opacity
+        ax_timeseries.fill_between(
+            pre_dosing_social['RelativeDate'],
+            pre_dosing_social['smoothed_mean'] - pre_dosing_social['se'],
+            pre_dosing_social['smoothed_mean'] + pre_dosing_social['se'],
+            color=social_color, alpha=0.3
+        )
     
-    # Add horizontal line at y=0
-    ax1.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+    # Plot post-dosing segment for social words with increased line width
+    if not post_dosing_social.empty:
+        ax_timeseries.plot(post_dosing_social['RelativeDate'], post_dosing_social['smoothed_mean'], 
+                color=social_color, linewidth=2.5, label=None if not pre_dosing_social.empty else 'Social Word Usage (Smoothed)')
+        
+        # Add confidence interval for post-dosing social words with increased opacity
+        ax_timeseries.fill_between(
+            post_dosing_social['RelativeDate'],
+            post_dosing_social['smoothed_mean'] - post_dosing_social['se'],
+            post_dosing_social['smoothed_mean'] + post_dosing_social['se'],
+            color=social_color, alpha=0.3
+        )
     
-    # Set y-axis limit to accommodate significance bars and include zero
-    buffer = (y_pos - max_y) * 0.2  # Add a small buffer
-    ax1.set_ylim(min_y - buffer, y_pos + buffer)
+    # Add vertical line at day 0 (dosing)
+    ax_timeseries.axvline(x=0, color='black', linestyle='--', alpha=0.7, label='Dosing Day')
     
-    # Add labels and title for cognitive words
-    ax1.set_xlabel('Time Period Relative to Dosing', fontsize=12)
-    ax1.set_ylabel('Mean Cognitive Word Usage\n(Standard Deviations from Individual Mean)', fontsize=12)
-    ax1.set_title('Comparison of Cognitive Word Usage', fontsize=14)
+    # Replace colored background with vertical lines and text labels for periods
+    period_edges = sorted(set(edge for period, (start, end) in periods.items() for edge in [start, end]))
     
-    # Set x-tick labels
-    ax1.set_xticks(range(len(periods)))
-    ax1.set_xticklabels(periods, rotation=45, ha='right')
+    # Add vertical lines at period boundaries
+    for edge in period_edges:
+        if edge != 0:  # We already have a line at day 0
+            ax_timeseries.axvline(x=edge, color='gray', linestyle=':', alpha=0.5)
+    
+    # Add text labels for periods
+    y_text_pos = ax_timeseries.get_ylim()[1] * 0.9  # Position text near the top
+    for period_name, (start, end) in periods.items():
+        # Place text in the middle of the period
+        mid_point = (start + end) / 2
+        ax_timeseries.text(mid_point, y_text_pos, period_name, 
+                          ha='center', va='bottom', fontsize=9,
+                          bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2))
+    
+    # Add labels and title
+    ax_timeseries.set_xlabel('Days Relative to Dosing', fontsize=12)
+    ax_timeseries.set_ylabel('Word Usage \n(Standard Deviations from Individual Mean)', fontsize=12)
+    ax_timeseries.set_title('Temporal Evolution of Cognitive and Social Word Usage Around 5-MeO-DMT Dosing', fontsize=14)
+    
+    # Add horizontal line at y=0 to represent individual baseline
+    ax_timeseries.axhline(y=0, color='gray', linestyle='-', alpha=0.5, linewidth=1)
     
     # Add grid
-    ax1.grid(True, alpha=0.3, axis='y')
+    ax_timeseries.grid(True, alpha=0.3)
     
-    # Plot for social words
-    means_social = [stats['mean'] for stats in period_stats_social.values()]
-    errors_social = [stats['se'] for stats in period_stats_social.values()]
+    # Add legend - place it inside the plot instead of outside
+    ax_timeseries.legend(loc='best', fontsize=9)
     
-    # Create color array based on values (positive or negative)
-    colors_social = ['darkgreen']
+    # Set x-axis limits to focus on the period of interest
+    ax_timeseries.set_xlim(-14.5, 14.5)
     
-    bars2 = ax2.bar(range(len(periods)), means_social, yerr=errors_social, capsize=5, 
-                   color=colors_social, alpha=0.7, edgecolor='green')
+    # --- WORD CLOUDS (MIDDLE ROW) ---
     
-    # Add significance bars for social word comparisons
-    min_y = min(means_social) - max(errors_social) * 2
-    max_y = max(means_social) + max(errors_social) * 2
-    
-    # If all values have the same sign, ensure zero is included
-    if min_y > 0:
-        min_y = 0
-    if max_y < 0:
-        max_y = 0
+    CORE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        # Process wordcloud data
+        def process_html_file(file_path, color_code='#4c82a3ff'):
+            """Process an HTML file to extract words from <span> tags with a specific color style."""
+            import re
+            from collections import defaultdict
+            
+            # Read the content of the HTML file into a string
+            with open(file_path, 'r') as f:
+                html = f.read()
+
+            # Convert HTML to lowercase for consistent matching
+            html = html.lower()
+
+            # Regex to match: <span style='color: #4c82a3ff'>word</span>
+            pattern = rf"<span style='color: {color_code}'>(.*?)</span>"
+
+            # Extract all matched words
+            matches = re.findall(pattern, html)
+
+            # Count the occurrences of each word
+            word_count = defaultdict(int)
+            for word in matches:
+                word_count[word] += 1
+
+            # Sort the dictionary by count in descending order
+            sorted_word_count = sorted(word_count.items(), key=lambda x: x[1], reverse=True)
+
+            # Convert the sorted list of tuples back into a dictionary
+            sorted_word_count_dict = dict(sorted_word_count)
+
+            # discard spaces in dict keys
+            sorted_word_count_dict = {k.replace(' ', ''): v for k, v in sorted_word_count_dict.items()}
+
+            return sorted_word_count_dict
         
-    bar_height = (max_y - min_y) * 0.05
-    
-    # Start significance bars from the top of the highest bar
-    y_pos = max_y + bar_height
-    
-    for comp in comparisons_social:
-        if comp['p-value-fdr'] < 0.05:  # Only show significant comparisons
-            idx1 = periods.index(comp['Period 1'])
-            idx2 = periods.index(comp['Period 2'])
+        # Try to load the data files
+        try:
+            wcd_cog = process_html_file(os.path.join(CORE_DIR, 'data/wordcloud_data/cognition.html'))
+            wcd_soc = process_html_file(os.path.join(CORE_DIR, 'data/wordcloud_data/social.html'))
+            print("COGNITION: ", wcd_cog)
+            print("SOCIAL: ", wcd_soc)
+
+            # Cognitive wordcloud - update colormap to a darker blue variant
+            wordcloud_cog = WordCloud(width=900, height=400, background_color='white', 
+                                      max_words=75, colormap='Blues_r', random_state=10).generate_from_frequencies(wcd_cog)
+            ax_wordcloud_cog.imshow(wordcloud_cog, interpolation='bilinear')
+            ax_wordcloud_cog.axis('off')
+            # ax_wordcloud_cog.set_title("Comparison of Cognitive Word Usage", fontsize=14)
             
-            # Draw the line
-            ax2.plot([idx1, idx2], [y_pos, y_pos], color='black', linewidth=1.5)
+            # Social wordcloud - update colormap to a darker red variant
+            wordcloud_soc = WordCloud(width=900, height=400, background_color='white', 
+                                      max_words=75, colormap='Reds_r', random_state=42).generate_from_frequencies(wcd_soc)
+            ax_wordcloud_soc.imshow(wordcloud_soc, interpolation='bilinear')
+            ax_wordcloud_soc.axis('off')
+            # ax_wordcloud_soc.set_title("Comparison of Social Word Usage", fontsize=14)
             
-            # Add significance stars
-            if comp['p-value-fdr'] < 0.001:
-                stars = '***'
-            elif comp['p-value-fdr'] < 0.01:
-                stars = '**'
-            else:
-                stars = '*'
+        except FileNotFoundError as e:
+            print(f"Warning: Could not find wordcloud data files: {e}")
+            ax_wordcloud_cog.text(0.5, 0.5, "Wordcloud data not available", ha='center', va='center')
+            ax_wordcloud_cog.axis('off')
+            ax_wordcloud_soc.text(0.5, 0.5, "Wordcloud data not available", ha='center', va='center')
+            ax_wordcloud_soc.axis('off')
+            
+    except ImportError:
+        print("Warning: WordCloud package not installed. Wordclouds will not be displayed.")
+        ax_wordcloud_cog.text(0.5, 0.5, "WordCloud package not installed", ha='center', va='center')
+        ax_wordcloud_cog.axis('off')
+        ax_wordcloud_soc.text(0.5, 0.5, "WordCloud package not installed", ha='center', va='center')
+        ax_wordcloud_soc.axis('off')
+    
+    # --- BAR PLOTS (BOTTOM ROW) ---
+    
+    if period_stats_cog and period_stats_social and comparisons_cog and comparisons_social:
+        # Plot for cognitive words (bottom left) with increased opacity
+        periods_list = list(period_stats_cog.keys())
+        means_cog = [stats['mean'] for stats in period_stats_cog.values()]
+        errors_cog = [stats['se'] for stats in period_stats_cog.values()]
+        
+        bars_cog = ax_bar_cog.bar(range(len(periods_list)), means_cog, yerr=errors_cog, capsize=5, 
+                       color=cog_color, alpha=0.8, edgecolor=cog_color)
+        
+        # Add significance bars for cognitive word comparisons
+        min_y = min(means_cog) - max(errors_cog) * 2
+        max_y = max(means_cog) + max(errors_cog) * 2
+        
+        # If all values have the same sign, ensure zero is included
+        if min_y > 0:
+            min_y = 0
+        if max_y < 0:
+            max_y = 0
+            
+        bar_height = (max_y - min_y) * 0.05
+        
+        # Start significance bars from the top of the highest bar
+        y_pos = max_y + bar_height
+        
+        for comp in comparisons_cog:
+            if comp['p-value-fdr'] < 0.05:  # Only show significant comparisons
+                idx1 = periods_list.index(comp['Period 1'])
+                idx2 = periods_list.index(comp['Period 2'])
                 
-            ax2.text((idx1 + idx2)/2, y_pos + bar_height*0.2, stars, 
-                    ha='center', va='bottom', color='black')
+                # Draw the line
+                ax_bar_cog.plot([idx1, idx2], [y_pos, y_pos], color='black', linewidth=1.5)
+                
+                # Add significance stars
+                if comp['p-value-fdr'] < 0.001:
+                    stars = '***'
+                elif comp['p-value-fdr'] < 0.01:
+                    stars = '**'
+                else:
+                    stars = '*'
+                    
+                ax_bar_cog.text((idx1 + idx2)/2, y_pos - 0.005, stars, 
+                        ha='center', va='bottom', color='black')
+                
+                y_pos += bar_height * 1.5  # Increment for next bar
+        
+        # Add horizontal line at y=0
+        ax_bar_cog.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        
+        # Set y-axis limit to accommodate significance bars and include zero
+        buffer = (y_pos - max_y) * 0.2  # Add a small buffer
+        # Limit how high the y-axis can go
+        max_ylim = max(means_cog) + max(errors_cog) * 4  # Set a reasonable maximum height
+        y_pos_capped = min(y_pos + buffer, max_ylim)
+        ax_bar_cog.set_ylim(min_y - buffer, y_pos_capped)
+        
+        # Add labels for cognitive words
+        ax_bar_cog.set_xlabel('Time Period Relative to Dosing', fontsize=12)
+        ax_bar_cog.set_ylabel('Mean Cognitive Word Usage\n(Standard Deviations \nfrom Individual Mean)', 
+                          fontsize=12, labelpad=15)
+        
+        # Set x-tick labels
+        ax_bar_cog.set_xticks(range(len(periods_list)))
+        ax_bar_cog.set_xticklabels(periods_list, rotation=45, ha='right', fontsize=10)
+        
+        # Add grid
+        ax_bar_cog.grid(True, alpha=0.3, axis='y')
+        ax_bar_cog.set_title("Cognitive Word Usage", fontsize=14)
+        
+        # Plot for social words (bottom right) with increased opacity
+        means_social = [stats['mean'] for stats in period_stats_social.values()]
+        errors_social = [stats['se'] for stats in period_stats_social.values()]
+        
+        bars_soc = ax_bar_soc.bar(range(len(periods_list)), means_social, yerr=errors_social, capsize=5, 
+                       color=social_color, alpha=0.8, edgecolor=social_color)
+        
+        # Add significance bars for social word comparisons
+        min_y = min(means_social) - max(errors_social) * 2
+        max_y = max(means_social) + max(errors_social) * 2
+        
+        # If all values have the same sign, ensure zero is included
+        if min_y > 0:
+            min_y = 0
+        if max_y < 0:
+            max_y = 0
             
-            y_pos += bar_height * 1.5  # Increment for next bar
+        bar_height = (max_y - min_y) * 0.05
+        
+        # Start significance bars from the top of the highest bar
+        y_pos = max_y + bar_height
+        
+        for comp in comparisons_social:
+            if comp['p-value-fdr'] < 0.05:  # Only show significant comparisons
+                idx1 = periods_list.index(comp['Period 1'])
+                idx2 = periods_list.index(comp['Period 2'])
+                
+                # Draw the line
+                ax_bar_soc.plot([idx1, idx2], [y_pos, y_pos], color='black', linewidth=1.5)
+                
+                # Add significance stars
+                if comp['p-value-fdr'] < 0.001:
+                    stars = '***'
+                elif comp['p-value-fdr'] < 0.01:
+                    stars = '**'
+                else:
+                    stars = '*'
+                    
+                ax_bar_soc.text((idx1 + idx2)/2, y_pos + bar_height*0.1, stars, 
+                        ha='center', va='bottom', color='black')
+                
+                y_pos += bar_height * 1.5  # Increment for next bar
+        
+        # Add horizontal line at y=0
+        ax_bar_soc.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        
+        # Set y-axis limit to accommodate significance bars and include zero
+        buffer = (y_pos - max_y) * 0.2  # Add a small buffer
+        # Limit how high the y-axis can go
+        max_ylim = max(means_social) + max(errors_social) * 4  # Set a reasonable maximum height
+        y_pos_capped = min(y_pos + buffer, max_ylim)
+        ax_bar_soc.set_ylim(min_y - buffer, y_pos_capped)
+        
+        # Add labels for social words
+        ax_bar_soc.set_xlabel('Time Period Relative to Dosing', fontsize=12)
+        ax_bar_soc.set_ylabel('Mean Social Word Usage\n(Standard Deviations \nfrom Individual Mean)', 
+                          fontsize=12, labelpad=15)
+        
+        # Set x-tick labels
+        ax_bar_soc.set_xticks(range(len(periods_list)))
+        ax_bar_soc.set_xticklabels(periods_list, rotation=45, ha='right', fontsize=10)
+        
+        # Add grid
+        ax_bar_soc.grid(True, alpha=0.3, axis='y')
+        ax_bar_soc.set_title("Social Word Usage", fontsize=14)
+
+    else:
+        # Show message if period stats not provided
+        ax_bar_cog.text(0.5, 0.5, "Period statistics not available", ha='center', va='center')
+        ax_bar_cog.axis('off')
+        ax_bar_soc.text(0.5, 0.5, "Period statistics not available", ha='center', va='center')
+        ax_bar_soc.axis('off')
     
-    # Add horizontal line at y=0
-    ax2.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-    
-    # Set y-axis limit to accommodate significance bars and include zero
-    buffer = (y_pos - max_y) * 0.2  # Add a small buffer
-    ax2.set_ylim(min_y - buffer, y_pos + buffer)
-    
-    # Add labels and title for social words
-    ax2.set_xlabel('Time Period Relative to Dosing', fontsize=12)
-    ax2.set_ylabel('Mean Social Word Usage\n(Standard Deviations from Individual Mean)', fontsize=12)
-    ax2.set_title('Comparison of Social Word Usage', fontsize=14)
-    
-    # Set x-tick labels
-    ax2.set_xticks(range(len(periods)))
-    ax2.set_xticklabels(periods, rotation=45, ha='right')
-    
-    # Add grid
-    ax2.grid(True, alpha=0.3, axis='y')
-    
+    # Adjust the overall layout
     plt.tight_layout()
     
     # Save the figure if output path is provided
     if output_path:
-        fig.savefig(output_path, bbox_inches='tight')
+        fig.savefig(output_path, bbox_inches='tight', dpi=300)
+        print(f"Combined visualization saved to: {output_path}")
     
-    return fig, (ax1, ax2)
+    return fig, (ax_timeseries, ax_wordcloud_cog, ax_wordcloud_soc, ax_bar_cog, ax_bar_soc)
 
 def add_period_column(df):
     """
@@ -675,62 +871,129 @@ def analyze_word_dynamics(sentence_level_path, output_path=None):
     agg_daily_social = aggregate_daily_word_usage(daily_social, 'SocialDeviation')
     print("Daily word usage deviations aggregated across users.")
     
-    # Calculate period statistics for cognitive words
-    period_stats_cog, periods = calculate_period_statistics(daily_cognition, 'CogDeviation')
+    # Calculate period statistics for cognitive words - now passing agg_daily_cog to filter by user count
+    period_stats_cog, periods = calculate_period_statistics(
+        daily_cognition, 'CogDeviation', agg_daily_df=agg_daily_cog
+    )
     
-    # Calculate period statistics for social words
-    period_stats_social, _ = calculate_period_statistics(daily_social, 'SocialDeviation')
-    print("Period statistics calculated.")
+    # Calculate period statistics for social words - now passing agg_daily_social to filter by user count
+    period_stats_social, _ = calculate_period_statistics(
+        daily_social, 'SocialDeviation', agg_daily_df=agg_daily_social
+    )
+    print("Period statistics calculated (excluding days with only one user).")
     
-    # Perform pairwise comparisons for cognitive words
-    comparisons_cog = pairwise_period_comparisons(daily_cognition, periods, 'CogDeviation')
+    # Perform pairwise comparisons for cognitive words - now passing agg_daily_cog to filter by user count
+    comparisons_cog = pairwise_period_comparisons(
+        daily_cognition, periods, 'CogDeviation', agg_daily_df=agg_daily_cog
+    )
     
-    # Perform pairwise comparisons for social words
-    comparisons_social = pairwise_period_comparisons(daily_social, periods, 'SocialDeviation')
-    print("Pairwise comparisons completed.")
+    # Perform pairwise comparisons for social words - now passing agg_daily_social to filter by user count
+    comparisons_social = pairwise_period_comparisons(
+        daily_social, periods, 'SocialDeviation', agg_daily_df=agg_daily_social
+    )
+    print("Pairwise comparisons completed (excluding days with only one user).")
     
     # Print detailed statistics
     print_detailed_statistics(comparisons_cog, 'Cognitive')
     print_detailed_statistics(comparisons_social, 'Social')
     
-    # Plot combined time series
-    time_fig, time_ax = plot_combined_time_series(
+    # Check if output directory exists, create if it doesn't
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+    # Generate daily statistics table (independent of plots)
+    if output_path:
+        daily_stats = create_daily_stats_table(agg_daily_cog, agg_daily_social, output_path)
+        print(f"Daily statistics table created and saved to {output_path}_daily_stats.csv")
+    else:
+        daily_stats = create_daily_stats_table(agg_daily_cog, agg_daily_social)
+    
+    # Print the daily statistics table to the console
+    print_daily_stats_table(daily_stats)
+    
+    # Create the combined visualization
+    fig, axes = plot_combined_visualization(
         agg_daily_cog, 
         agg_daily_social,
-        periods, 
-        output_path=f"{output_path}_timeseries.png" if output_path else None
+        periods,
+        daily_cognition=daily_cognition,
+        daily_social=daily_social,
+        period_stats_cog=period_stats_cog,
+        period_stats_social=period_stats_social,
+        comparisons_cog=comparisons_cog,
+        comparisons_social=comparisons_social,
+        output_path=f"{output_path}_combined_visualization.png" if output_path else None
     )
     
-    # Plot period comparisons
-    bar_fig, bar_axes = plot_period_comparison(
-        period_stats_cog,
-        period_stats_social,
-        comparisons_cog,
-        comparisons_social,
-        output_path=f"{output_path}_barplot.png" if output_path else None
-    )
-    
-    print("Plots generated.")
+    print("Combined visualization generated.")
     
     if output_path:
-        print(f"Figures saved with base name: {output_path}")
+        print(f"Combined figure saved to: {output_path}_combined_visualization.png")
     
     return df, (daily_cognition, daily_social), (
         (period_stats_cog, comparisons_cog), 
         (period_stats_social, comparisons_social)
     )
 
+def print_daily_stats_table(daily_stats):
+    """
+    Print the daily statistics table to the console.
+    
+    Parameters:
+    -----------
+    daily_stats : pandas.DataFrame
+        DataFrame containing the daily statistics
+    """
+    print("\n=== DAILY STATISTICS TABLE ===\n")
+    print(f"{'Day':>5} | {'Cognitive Mean':>15} | {'Cognitive Users':>15} | {'Social Mean':>15} | {'Social Users':>15}")
+    print(f"{'-'*5} | {'-'*15} | {'-'*15} | {'-'*15} | {'-'*15}")
+    
+    for _, row in daily_stats.iterrows():
+        day = row['Day']
+        
+        # Handle potentially NaN values
+        if pd.isna(row['Cognitive Mean']):
+            cog_mean_str = "N/A".rjust(15)
+        else:
+            cog_mean_str = f"{row['Cognitive Mean']:15.3f}"
+            
+        if pd.isna(row['Cognitive Users']):
+            cog_users_str = "N/A".rjust(15)
+        else:
+            cog_users_str = f"{int(row['Cognitive Users']):15d}"
+            
+        if pd.isna(row['Social Mean']):
+            social_mean_str = "N/A".rjust(15)
+        else:
+            social_mean_str = f"{row['Social Mean']:15.3f}"
+            
+        if pd.isna(row['Social Users']):
+            social_users_str = "N/A".rjust(15)
+        else:
+            social_users_str = f"{int(row['Social Users']):15d}"
+        
+        print(f"{day:5.1f} | {cog_mean_str} | {cog_users_str} | {social_mean_str} | {social_users_str}")
+
 if __name__ == "__main__":
     # Example usage
     sentence_level_path = "/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/final/sentence_level.csv"
     
-    # Run analysis
+    # Create output directory if it doesn't exist
+    output_dir = "/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/outputs/figures"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Run analysis with output path in the figures directory
+    output_path = os.path.join(output_dir, "word_dynamics_results")
+    
     df, daily_usage, analysis_results = analyze_word_dynamics(
         sentence_level_path,
-        output_path="word_dynamics_results"
+        output_path=output_path
     )
 
     # Save the dataframes with daily word usage
     daily_cognition, daily_social = daily_usage
     daily_cognition.to_csv("/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/daily_cognition.csv", index=False)
     daily_social.to_csv("/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/daily_social.csv", index=False)
+    
+    print("\nAnalysis complete. Data files saved.")
+    print(f"Figures saved to: {output_dir}")
