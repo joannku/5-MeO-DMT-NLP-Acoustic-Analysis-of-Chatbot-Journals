@@ -79,6 +79,42 @@ def merge_all_means(df_weighted_means, df_vocal_means):
     """Merge weighted means with vocal means"""
     return pd.merge(df_weighted_means, df_vocal_means, on='UserID', how='left')
 
+def calculate_diffs(df):
+    """Calculate the difference between Pre and Post for each feature
+    And save it in a new column with the suffix _Diff.
+    Reorganizes columns to group Pre, Post, and Diff columns together."""
+    dfx = df.copy()
+    
+    # Get base feature names (without Pre/Post suffix)
+    pre_cols = [col for col in dfx.columns if 'Pre' in col]
+    base_features = [col.replace('_Pre', '') for col in pre_cols]
+    
+    # Calculate all differences at once
+    diff_dict = {
+        f'{feat}_Diff': dfx[f'{feat}_Post'] - dfx[f'{feat}_Pre']
+        for feat in base_features
+    }
+    
+    # Create difference DataFrame and concatenate with original
+    diff_df = pd.DataFrame(diff_dict)
+    dfx = pd.concat([dfx, diff_df], axis=1)
+    
+    # Reorder columns: group Pre, Post, and Diff for each feature
+    ordered_cols = []
+    non_feature_cols = [col for col in dfx.columns if not any(x in col for x in ['Pre', 'Post', 'Diff'])]
+    
+    for feat in base_features:
+        ordered_cols.extend([
+            f'{feat}_Pre',
+            f'{feat}_Post',
+            f'{feat}_Diff'
+        ])
+    
+    # Final column order: non-feature columns first, then grouped feature columns
+    dfx = dfx[non_feature_cols + ordered_cols]
+    
+    return dfx
+
 def main():
 
     df_liwc = pd.read_csv('/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/journals_sentences_liwc.csv')
@@ -118,6 +154,7 @@ def main():
 
     # Merge all means
     all_means = merge_all_means(weighted_means, vocal_means_df)
+    all_means = calculate_diffs(all_means)
     # to csv
     all_means.to_csv('/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/all_mean_scores.csv', index=False)
 

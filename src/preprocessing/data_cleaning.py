@@ -51,7 +51,7 @@ Dependencies:
 
 import pandas as pd
 import numpy as np
-from anonymise import TextAnonymizer
+from .anonymise import TextAnonymizer
 import re
 
 FINAL_COLORDER = ['UserID', 'RecordingID', 'Timestamp', 'TimestampCorrected', 'RetreatDate', 
@@ -228,6 +228,10 @@ def final_cleaning(df):
     df.loc[df['UserID'] == 'P4O85', 'UserID'] = 'P4085'
     print(df['UserID'].unique())
     print("✔︎ Username for P4085 corrected.")
+
+    # Remove participant with Participant ID = PRO71
+    df = df[df['UserID'] != 'PRO71']
+    print("✔︎ Participant with Participant ID = PRO71 removed.")
 
     # sort by RetreatDate, ascending and then UserID, ascending
     df = df.sort_values(by=['RetreatDate', 'UserID'], ascending=True)

@@ -23,6 +23,7 @@ from tokenize_sentences import tokenize_sentences
 from weighted_means import main as weighted_means_main
 from roberta_go_emotions import main as generate_go_emotions_scores
 from vocal_features import main as generate_vocal_features
+from integrate_data import main as integrate_data_main
 
 ################################################################################
 # 1. DATA PREPROCESSING
@@ -94,14 +95,10 @@ def engineer_features():
     # generate_vocal_features()
 
 # ################################################################################
-# # 3. WEIGHTED MEANS
+# # 3. WEIGHTED MEANS, MEANS AND DATA INTEGRATION
 # ################################################################################
 
-def calculate_weighted_means():
-    """
-    Calculate weighted means of LIWC scores and GoEmotions scores based on sentence level data.
-    """
-    weighted_means_main()
+weighted_means_main()
     # This function first concats the LIWC scores with the GoEmotions scores
     # And then calculates the weighted means for Pre and Post for the LIWC and GoEmotions
     # - INPUT: data/processed/roberta_go_emotions.csv, data/processed/journals_sentences_liwc.csv
@@ -109,27 +106,7 @@ def calculate_weighted_means():
     #       ^ this file can be used for mixed effects models to analyse pre/post effects
     # - OUTPUT: data/processed/sentence_weighted_means.csv
 
-# ################################################################################
-# # 4. DATA INTEGRATION
-# ################################################################################
-
-# def integrate_data():
-#     """
-#     Merge all generated features and create pre/post dosing splits.
-    
-#     Final dataset structure:
-#     - UserID
-#     - RecordingID
-#     - Timestamp
-#     - PrePost (0=pre-dosing, 1=post-dosing)
-#     - LIWC scores
-#     - GoEmotions scores
-#     - Acoustic features
-#     - PCA emotional profiles
-#     """
-#     # TODO: Implement data integration logic
-#     pass
-
+integrate_data_main()
 
 # ################################################################################
 # # 4. PREDICTIVE MODELING
