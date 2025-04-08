@@ -111,9 +111,11 @@ def create_all_features_plot(results_df, save_path):
         '#7f7f7f',  # dark gray
     ]
     
-    # Create plot with adjusted layout
-    fig, ax = plt.subplots(figsize=(15, 2))
-    fig.subplots_adjust(left=0.4, right=0.95, bottom=0.5, top=0.9)
+    # Create plot with adjusted layout - scale height based on number of features
+    feature_count = len(results_df)
+    fig_height = max(2, feature_count * 0.3)  # Minimum height of 2, otherwise scale by features
+    fig, ax = plt.subplots(figsize=(15, fig_height))
+    fig.subplots_adjust(left=0.4, right=0.95, bottom=0.2, top=0.9)
     
     # Plot vertical bars
     x_pos = np.arange(len(results_df))
@@ -181,6 +183,10 @@ def create_all_features_plot(results_df, save_path):
     
     # Save plot
     plt.savefig(save_path, dpi=1000, bbox_inches='tight', pad_inches=0.5)
+    
+    # Display plot in interactive window
+    plt.tight_layout()
+    plt.show()
     plt.close()
 
 
@@ -214,6 +220,7 @@ def create_forest_plot(results_df, save_path):
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()  # Display in interactive window
     plt.close()
 
 
@@ -276,6 +283,7 @@ def create_combined_plot(df, results_df, save_path):
                 fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()  # Display in interactive window
     plt.close()
 
 
@@ -345,6 +353,140 @@ def create_significant_changes_plot(results_df, save_path):
     
     # Save and show
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()  # Display in interactive window
+    plt.close()
+
+
+def create_mental_health_features_plot(results_df, save_path):
+    """Create a plot focusing on vocal features relevant to mental health."""
+    # First, examine the actual feature names in the dataset
+    print("Available features in dataset:")
+    for feat in sorted(results_df['feature'].unique()):
+        print(f"  - {feat}")
+    
+    # Define features relevant to mental health with human-readable names
+    # Use more flexible matching that tries both with and without suffixes
+    mh_relevant_features = {
+        'shimmerLocalDB_sma3nz': 'Voice Stability (Shimmer)',
+        'jitterLocal_sma3nz': 'Voice Irregularity (Jitter)',
+        'jitterLocal_sma3nz_stddevNorm': 'Jitter Variability',
+        'F0semitoneFrom27.5Hz_sma3nz': 'Pitch (F0)',
+        'F0semitoneFrom27.5Hz_sma3nz_stddevNorm': 'Pitch Variability',
+        'loudness_sma3_stddevNorm': 'Loudness Variability',
+        'loudness_sma3': 'Voice Loudness',
+        'voicingFinalUnclipped_sma3nz': 'Phonation Ratio',
+        'HNRdBACF_sma3nz': 'Signal-to-Noise Ratio',
+        'alphaRatio_sma3': 'Spectral Slope (Alpha)',
+        'hammarbergIndex_sma3': 'Voice Quality (Hammarberg)',
+        'slopeV500-1500_sma3': 'Spectral Slope (500-1500Hz)',
+        'F1frequency_sma3nz': 'First Formant Frequency',
+        'F1bandwidth_sma3nz': 'First Formant Bandwidth',
+        'F1amplitudeLogRelF0_sma3nz': 'First Formant Intensity',
+        'F3frequency_sma3nz': 'Third Formant Frequency',
+        'mfcc1_sma3': 'Voice Timbre (MFCC1)',
+        'mfcc2_sma3': 'Vocal Tract Shape (MFCC2)',
+        'spectralFlux_sma3': 'Voice Dynamics'
+    }
+    
+    # Filter using a more flexible approach - check if any of our keys are in the feature name
+    feature_pattern = '|'.join(mh_relevant_features.keys())
+    mh_df = results_df[results_df['feature'].str.contains(feature_pattern, regex=True)].copy()
+    
+    # Check if we have any matches
+    if len(mh_df) == 0:
+        print("No mental health relevant features found in the dataset.")
+        print("Please check feature names in your data against the dictionary keys.")
+        return
+    
+    # Ensure no duplicate features by keeping first occurrence of each display name
+    # Map feature names to human-readable labels
+    mh_df['display_name'] = mh_df['feature'].apply(
+        lambda x: next((val for key, val in mh_relevant_features.items() 
+                      if key in x), clean_feature_name(x)))
+    
+    # Drop duplicates keeping the first occurrence of each display name
+    mh_df = mh_df.drop_duplicates(subset=['display_name'])
+    
+    # Sort by mean difference
+    mh_df['Mean Difference'] = mh_df['Mean Difference'].astype(float)
+    mh_df['ci_lower'] = mh_df['ci_lower'].astype(float)
+    mh_df['ci_upper'] = mh_df['ci_upper'].astype(float)
+    mh_df['p-adjusted'] = mh_df['p-adjusted'].astype(float)
+    mh_df = mh_df.sort_values('Mean Difference')
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 0.5*len(mh_df) + 1))
+    
+    # Create colors - only significant features get colored
+    colors = []
+    for idx, row in mh_df.iterrows():
+        if row['p-adjusted'] < 0.05:
+            colors.append('#2166AC' if row['Mean Difference'] < 0 else '#B2182B')
+        else:
+            colors.append('gray')
+    
+    # Plot horizontal bars
+    y_pos = np.arange(len(mh_df))
+    bars = ax.barh(y_pos, 
+                  mh_df['Mean Difference'],
+                  height=0.6,
+                  color=colors)
+    
+    # Add error bars
+    error_bars = ax.errorbar(mh_df['Mean Difference'],
+                           y_pos,
+                           xerr=[(mh_df['Mean Difference'] - mh_df['ci_lower']),
+                                (mh_df['ci_upper'] - mh_df['Mean Difference'])],
+                           fmt='none',
+                           color='black',
+                           capsize=3)
+    
+    # Add vertical line at zero
+    ax.axvline(x=0, color='black', linestyle='-', linewidth=0.5, alpha=0.3)
+    
+    # Add significance markers
+    for idx, p_val in enumerate(mh_df['p-adjusted']):
+        if p_val < 0.05:  # Only add stars for significant results
+            stars = '*' * sum([p_val < cutoff for cutoff in [0.05, 0.01, 0.001]])
+            x_pos = mh_df['Mean Difference'].iloc[idx]
+            x_offset = 0.05 if x_pos >= 0 else -0.05
+            ax.text(x_pos + x_offset, idx, 
+                    stars, 
+                    va='center',
+                    ha='left' if x_pos >= 0 else 'right')
+    
+    # Customize y-axis labels
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(mh_df['display_name'])
+    
+    # Set reasonable x-axis limits with safety checks
+    try:
+        ci_lower_min = mh_df['ci_lower'].min()
+        ci_upper_max = mh_df['ci_upper'].max()
+        
+        # Only proceed if values are finite
+        if np.isfinite(ci_lower_min) and np.isfinite(ci_upper_max):
+            max_abs = max(abs(ci_lower_min), abs(ci_upper_max))
+            ax.set_xlim(-max_abs*1.2, max_abs*1.2)
+        else:
+            # Fallback to safe defaults if we have NaN/Inf values
+            ax.set_xlim(-1.5, 1.5)
+    except (ValueError, TypeError):
+        # Fallback to safe defaults
+        ax.set_xlim(-1.5, 1.5)
+    
+    # Add labels and title with Z-score clarification
+    ax.set_xlabel('Changes in Vocal Features (Z-scores)\n(Post-5-MeO-DMT minus Pre-5-MeO-DMT)')
+    
+    # Add grid
+    ax.grid(True, axis='x', linestyle=':', alpha=0.3)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save and show
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
     plt.close()
 
 
@@ -362,27 +504,47 @@ def print_significant_features(results_df):
     print("}")
 
 
-def save_results_table(results_df):
-    """Save the results table to CSV."""
+def save_results_table(results_df, n_observations):
+    """Save the results table to CSV with specified column format."""
     # Sort by adjusted p-value
     table_df = results_df.sort_values('raw_p')
     
-    # Format p-values and mean difference for table
-    for col in ['p-value', 'p-adjusted', 'Mean Difference']:
-        table_df[col] = table_df[col].apply(lambda x: f"{float(x):.3f}")
+    # Calculate standard error (SE = SD/sqrt(n))
+    table_df['Standard Error'] = 1.0 / np.sqrt(n_observations)  # Since we're using z-scores, SD is 1
+    
+    # Format values for table
+    table_df['Pre Mean'] = table_df['Pre Mean (SD)'].apply(lambda x: float(x.split(' ')[0]))
+    table_df['Post Mean'] = table_df['Post Mean (SD)'].apply(lambda x: float(x.split(' ')[0]))
     
     # Select and rename columns for final table
     table_df = table_df[[
         'Feature', 
-        'Pre Mean (SD)', 
-        'Post Mean (SD)', 
+        'Pre Mean',
+        'Post Mean',
         'Mean Difference',
-        '95% CI',
-        't-statistic',
-        'p-value',
+        'Standard Error',
+        'ci_lower',
+        'ci_upper',
+        'raw_p',
         'p-adjusted',
         'Significance'
     ]].copy()
+    
+    # Rename columns to match requested format
+    table_df = table_df.rename(columns={
+        'ci_lower': 'CI Lower',
+        'ci_upper': 'CI Upper',
+        'raw_p': 'P-Value',
+        'p-adjusted': 'Corrected P-Value'
+    })
+    
+    # Add N Observations column
+    table_df['N Observations'] = n_observations
+    
+    # Format numeric columns
+    for col in ['Pre Mean', 'Post Mean', 'Mean Difference', 'Standard Error', 
+                'CI Lower', 'CI Upper', 'P-Value', 'Corrected P-Value']:
+        table_df[col] = table_df[col].apply(lambda x: f"{float(x):.3f}")
     
     # Create output directory if it doesn't exist
     TABLE_DIR.mkdir(parents=True, exist_ok=True)
@@ -413,11 +575,14 @@ def main():
     create_combined_plot(df, results_df, FIGURE_DIR / 'vocal_changes_combined.png')
     create_significant_changes_plot(results_df, FIGURE_DIR / 'vocal_changes_significant.png')
     
+    # Create new plot with mental health relevant features
+    create_mental_health_features_plot(results_df, FIGURE_DIR / 'vocal_changes_mental_health.png')
+    
     # Print significant features
     print_significant_features(results_df)
     
     # Save results table
-    save_results_table(results_df)
+    save_results_table(results_df, len(df))
 
 
 if __name__ == "__main__":

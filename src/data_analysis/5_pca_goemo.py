@@ -441,8 +441,15 @@ class EmotionPCAVisualizer(EmotionPCAAnalyzer):
         for i, cum_var in enumerate(cumulative, 1):
             print(f"PC1-PC{i}: {cum_var:.3f} ({cum_var*100:.1f}%)")
 
-    def plot_loadings_heatmap(self, save_path=None, threshold=0.2):
-        """Create heatmap of PCA loadings."""
+    def plot_loadings_heatmap(self, save_path=None, threshold=0.2, figsize=(12, 10), component_labels=None):
+        """Create heatmap of PCA loadings with custom component labels.
+        
+        Args:
+            save_path (str, optional): Path to save the figure
+            threshold (float, optional): Threshold for significant loadings
+            figsize (tuple, optional): Figure size
+            component_labels (dict, optional): Dictionary mapping PC names to descriptive labels
+        """
         if self.pca is None:
             self.run_pca_analysis()
         
@@ -450,15 +457,28 @@ class EmotionPCAVisualizer(EmotionPCAAnalyzer):
         loadings = self.loadings.copy()
         loadings.index = [col.replace('_Pre', '').replace('goemo_', '') for col in self.features]
         
+        # Create a copy for display with potentially renamed columns
+        display_loadings = loadings.copy()
+        
+        # Rename columns if component labels are provided
+        if component_labels:
+            column_mapping = {}
+            for col in display_loadings.columns:
+                if col in component_labels:
+                    column_mapping[col] = component_labels[col]
+            
+            if column_mapping:
+                display_loadings = display_loadings.rename(columns=column_mapping)
+        
         # Create figure
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=figsize)
         
         # Create custom colormap for non-significant values
         gray_cmap = ListedColormap(['#E0E0E0'])  # Light gray
         
         # Plot non-significant values in gray
-        mask_nonsig = abs(loadings) <= threshold
-        ax = sns.heatmap(loadings.where(mask_nonsig), 
+        mask_nonsig = abs(display_loadings) <= threshold
+        ax = sns.heatmap(display_loadings.where(mask_nonsig), 
                          mask=~mask_nonsig,
                          cmap=gray_cmap,
                          center=0,
@@ -467,8 +487,8 @@ class EmotionPCAVisualizer(EmotionPCAAnalyzer):
                          cbar=False)
         
         # Plot significant values with coolwarm colormap
-        mask_sig = abs(loadings) > threshold
-        sns.heatmap(loadings.where(mask_sig),
+        mask_sig = abs(display_loadings) > threshold
+        sns.heatmap(display_loadings.where(mask_sig),
                     mask=~mask_sig,
                     cmap='coolwarm',
                     center=0,
@@ -477,19 +497,24 @@ class EmotionPCAVisualizer(EmotionPCAAnalyzer):
                     cbar=True,
                     ax=ax)
         
-        plt.title(f'PCA Loadings (colored if |loading| > {threshold})')
+        # plt.title(f'PCA Loadings (colored if |loading| > {threshold})')
         
-        # Set x-axis labels horizontal
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
+        # Rotate x-axis labels for better readability
+        plt.xticks(rotation=45, ha='right')
         
+        # Add more space at the bottom for the labels
+        plt.subplots_adjust(bottom=0.3)
+        
+        # Adjust layout to ensure labels are visible
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=400, bbox_inches='tight')
         
+        # Make sure to display the plot
         plt.show()
         
-        return loadings
+        return loadings  # Return the original loadings
 
     def calculate_emotion_pc_correlations(self):
         """
@@ -652,7 +677,8 @@ class PCARegressor:
     def plot_pc_relationship(self, data, pc, outcome, model, 
                             color='purple', ax=None,
                             title=None,
-                            y_label=None):
+                            y_label=None,
+                            pc_label=None):
         """
         Plot relationship between PC and psychological measure with enhanced styling
         """
@@ -692,9 +718,15 @@ class PCARegressor:
         # Labels and title
         if title is None:
             title = f'{outcome} ~ {pc}'
-        ax.set_title(title, fontsize=14, pad=20)
-        ax.set_xlabel(f'{pc} Score', fontsize=12)
-        ax.set_ylabel(y_label if y_label else outcome, fontsize=12)
+        ax.set_title(title, fontsize=16, pad=20)
+        
+        # Use the new PC label for x-axis if provided
+        if pc_label:
+            ax.set_xlabel(pc_label, fontsize=14)
+        else:
+            ax.set_xlabel(f'{pc} Score', fontsize=14)
+        
+        ax.set_ylabel(y_label if y_label else outcome, fontsize=14)
 
         # Get FDR value for this specific relationship
         fdr_val = self.final_results[
@@ -751,7 +783,7 @@ class PCARegressor:
         colors = sns.color_palette("icefire", n_colors=5)
 
         # Plot each relationship
-        for i, (pc, dv, title, y_label, _) in enumerate(relationships):
+        for i, (pc, dv, title, y_label, pc_label) in enumerate(relationships):
             print(f"\nProcessing plot {i+1}: {pc} vs {dv}")
             model = self.single_pc_models[dv][0]
             self.plot_pc_relationship(
@@ -762,14 +794,18 @@ class PCARegressor:
                 color=colors[i],
                 ax=axes[i],
                 title=title,
-                y_label=y_label
+                y_label=y_label,
+                pc_label=pc_label
             )
 
         plt.tight_layout()
         
+        # Display the figure first
+        plt.show()
+        
+        # Then save if a path is provided
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close(fig)  
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
         
         return fig
 
@@ -924,6 +960,13 @@ print(" ### Prediction of Questionnaires by PCs ### \n")
 
 PC_INTERPRETATIONS = json.load(open(f'{CORE_DIR}/config/pca_interpretations.json'))['PC_INTERPRETATIONS']
 
+# Define component labels
+component_labels = {
+    'PC1': 'PC1: Positive Emotion Engagement',
+    'PC2': 'PC2: Negative Emotional States',
+    'PC3': 'PC3: Reflective Integration'
+}
+
 # Get PC scores from the analyzer
 pc_scores = analyzer.data[[f'PC{i+1}' for i in range(3)]]
 
@@ -935,9 +978,9 @@ pca_cols = [f'PC{i+1}' for i in range(3)]
 
 # Define relationships for visualization (significant ones)
 relationships = [
-    ('PC1', 'survey_aPPS_total', 'Psychedelic Preparedness', 'PPS Score', 0),
-    ('PC1', 'survey_bSWEBWBS', 'Post-Experience Psychological Wellbeing', 'sWEMWBS Score', 1),
-    ('PC3', 'survey_EBI', 'Emotional Breakthrough', 'EBI Score', 2),
+    ('PC1', 'survey_aPPS_total', 'Psychedelic Preparedness', 'PPS Score', component_labels['PC1']),
+    ('PC1', 'survey_bSWEBWBS', 'Post-Experience Psychological Wellbeing', 'sWEMWBS Score', component_labels['PC1']),
+    ('PC3', 'survey_EBI', 'Emotional Breakthrough', 'EBI Score', component_labels['PC3']),
 ]
 
 # Define all relationships for the table
@@ -966,6 +1009,169 @@ results_table = regressor.create_results_table()
 print("\nResults Table (All Relationships):")
 display(results_table)
 results_table.to_csv(f'{CORE_DIR}/outputs/tables/pca_results_table.csv')
+
+# Create and display the loadings heatmap
+print("\nGenerating PCA loadings heatmap...")
+
+def plot_heatmap_with_multiline_labels(visualizer, save_path=None, threshold=0.2, figsize=(12, 6), component_labels=None, transpose=True):
+    """Create heatmap of PCA loadings with multi-line component labels, optionally transposed."""
+    if visualizer.pca is None:
+        visualizer.run_pca_analysis()
+    
+    # Define emotion order based on the dendrogram clustering
+    emotion_order = [
+        # Positive sentiment cluster
+        'amusement',
+        'excitement',
+        'joy',
+        'love',
+        'desire',
+        'optimism',
+        'caring',
+        'pride',
+        'admiration',
+        'gratitude',
+        'relief',
+        'approval',
+        'realization',
+        # Ambiguous sentiment cluster
+        'surprise',
+        'curiosity',
+        'confusion',
+        # Negative sentiment cluster
+        'fear',
+        'nervousness',
+        'remorse',
+        'embarrassment',
+        'disappointment',
+        'sadness',
+        'grief',
+        'disgust',
+        'anger',
+        'annoyance',
+        'disapproval'
+    ]
+    
+    # Create loadings with simplified column names
+    loadings = visualizer.loadings.copy()
+    loadings.index = [col.replace('_Pre', '').replace('goemo_', '') for col in visualizer.features]
+    
+    # Reorder columns according to emotion_order
+    if transpose:
+        loadings = loadings.T
+        loadings = loadings[emotion_order]
+    else:
+        loadings = loadings.reindex(emotion_order)
+    
+    # Create figure
+    plt.figure(figsize=figsize)
+    
+    # Create custom colormaps
+    gray_cmap = ListedColormap(['#f0f0f0'])  # Lighter gray for non-significant values
+    
+    # Use RdBu_r (reversed Red-Blue) colormap which is:
+    # - More colorblind friendly
+    # - Better for scientific visualization
+    # - Red for positive loadings, Blue for negative loadings
+    # - Higher contrast than coolwarm
+    
+    # Plot non-significant values in light gray
+    mask_nonsig = abs(loadings) <= threshold
+    ax = sns.heatmap(loadings.where(mask_nonsig), 
+                     mask=~mask_nonsig,
+                     cmap=gray_cmap,
+                     center=0,
+                     annot=True,
+                     fmt='.2f',
+                     cbar=False)
+    
+    # Plot significant values with RdBu_r colormap
+    mask_sig = abs(loadings) > threshold
+    sns.heatmap(loadings.where(mask_sig),
+                mask=~mask_sig,
+                cmap='RdBu_r',  # Changed from 'coolwarm' to 'RdBu_r'
+                center=0,
+                annot=True,
+                fmt='.2f',
+                cbar=True,
+                ax=ax,
+                vmin=-0.5,  # Set fixed range for better comparison
+                vmax=0.5)   # Set fixed range for better comparison
+
+    # plt.title(f'PCA Loadings (colored if |loading| > {threshold})')
+    
+    # If transposed and component labels provided, rename the y-axis labels
+    if transpose and component_labels:
+        # Get current y-tick positions
+        tick_locs = ax.get_yticks()
+        
+        # Set new labels at the tick positions
+        ax.set_yticks(tick_locs)
+        
+        # Create new labels list for y-axis
+        new_labels = []
+        for i, idx in enumerate(loadings.index):
+            if idx in component_labels:
+                new_labels.append(component_labels[idx])
+            else:
+                new_labels.append(idx)
+        
+        # Set the new y-axis labels with proper alignment
+        ax.set_yticklabels(new_labels, rotation=0, ha='right', va='center', fontsize=14)
+        
+        # Adjust margins for y-labels
+        plt.subplots_adjust(left=0.35)  # More space on the left for the labels
+    
+    # Rotate x-axis labels for better readability if we have a lot of emotions (when transposed)
+    if transpose:
+        plt.xticks(rotation=75, ha='center', fontsize=14)
+    else:
+        # Apply custom labels with newlines if provided (for non-transposed version)
+        if component_labels:
+            # Get current tick positions
+            tick_locs = ax.get_xticks()
+            
+            # Set new labels at the tick positions
+            ax.set_xticks(tick_locs)
+            
+            # Create new labels list 
+            new_labels = []
+            for i, col in enumerate(loadings.columns):
+                if col in component_labels:
+                    new_labels.append(component_labels[col])
+                else:
+                    new_labels.append(col)
+            
+            # Set the new labels with proper horizontal alignment and rotation
+            ax.set_xticklabels(new_labels, rotation=45, ha='center', va='top', fontsize=10)
+            
+            # Add more space at the bottom for the labels
+            plt.subplots_adjust(bottom=0.25)
+    
+    # Tight layout should be after subplots_adjust
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=400, bbox_inches='tight')
+    
+    # Make sure to display the plot
+    plt.show()
+    
+    return loadings
+
+# Call the custom function with transpose=True
+loadings_df = plot_heatmap_with_multiline_labels(
+    visualizer,
+    save_path=f'{CORE_DIR}/outputs/figures/pca_loadings_heatmap_transposed.png',
+    threshold=0.2,
+    figsize=(17, 3),  # Wider figure for transposed view
+    component_labels=component_labels,
+    transpose=True
+)
+
+# Optional: Force matplotlib to show all open figures
+plt.ion()  # Turn on interactive mode
+plt.pause(0.1)  # Small pause to ensure display refreshes
 
 # %%
 

@@ -202,10 +202,10 @@ def calculate_period_statistics(daily_counts):
     """
     # Define periods as weekly ranges
     periods = {
-        'Week -2 (-14 to -7)': (-14, -7),
-        'Week -1 (-7 to 0)': (-7, 0),
-        'Week +1 (0 to 7)': (0, 7),
-        'Week +2 (7 to 14)': (7, 14)
+        'Week -2 \n(-14 to -7)': (-14, -7),
+        'Week -1 \n(-7 to 0)': (-7, 0),
+        'Week +1 \n(0 to 7)': (0, 7),
+        'Week +2 \n(7 to 14)': (7, 14)
     }
     
     # Calculate statistics for each period
@@ -222,7 +222,7 @@ def calculate_period_statistics(daily_counts):
     
     return period_stats, periods
 
-def pairwise_comparisons(periods, anomaly_type, daily_counts):
+def pairwise_comparisons(periods, anomaly_type, daily_counts, feature_name=""):
     """
     Perform pairwise t-tests between periods.
     
@@ -234,6 +234,8 @@ def pairwise_comparisons(periods, anomaly_type, daily_counts):
         Type of anomaly to compare ('High' or 'Low')
     daily_counts : pandas.DataFrame
         The dataframe with daily deviation counts
+    feature_name : str
+        Name of the feature being compared (e.g., 'Pitch', 'Jitter', 'Shimmer')
         
     Returns:
     --------
@@ -279,11 +281,16 @@ def pairwise_comparisons(periods, anomaly_type, daily_counts):
     p_values = [comp['p-value'] for comp in comparisons]
     rejected, p_corrected, _, _ = multipletests(p_values, method='fdr_bh')
     
-    # Add corrected p-values to comparisons
+    # Add corrected p-values to comparisons and print only significant ones
     for i, comp in enumerate(comparisons):
         comp['p-value-fdr'] = p_corrected[i]
-        # Print the p-values
-        print(f"Comparison between {comp['Period 1']} and {comp['Period 2']}: p-value = {comp['p-value']}, p-value (FDR) = {comp['p-value-fdr']}")
+        # Only print if significant after FDR correction
+        if p_corrected[i] < 0.05:
+            # Add arrow based on means comparison
+            arrow = "↑" if comp['mean2'] > comp['mean1'] else "↓"
+            print(f"{feature_name} - {anomaly_type} - Significant comparison between {comp['Period 1']} and {comp['Period 2']}: "
+                  f"{arrow} {comp['mean1']:.2f} to {comp['mean2']:.2f}, "
+                  f"p-value = {comp['p-value']:.4f}, p-value (FDR) = {comp['p-value-fdr']:.4f}")
     
     return comparisons
 
@@ -373,8 +380,8 @@ def plot_bar_comparison(ax, stats, title, counts, periods):
     add_error_bars(counts, [p for p in periods.values()], 'Low', x + width/2)
     
     # Calculate pairwise comparisons for significance testing
-    high_comparisons = pairwise_comparisons(periods, 'High', counts)
-    low_comparisons = pairwise_comparisons(periods, 'Low', counts)
+    high_comparisons = pairwise_comparisons(periods, 'High', counts, 'Pitch')
+    low_comparisons = pairwise_comparisons(periods, 'Low', counts, 'Pitch')
     
     # Add significance bars for high deviations (red)
     y_max = max(max(high_means), max(low_means)) * 1.1
@@ -437,7 +444,7 @@ def plot_bar_comparison(ax, stats, title, counts, periods):
     
     # Finalize plot
     ax.set_title(title)
-    ax.set_ylabel('Mean Frequency of Deviations from Mean')
+    ax.set_ylabel('Average Frequency of Deviations from Mean')
     ax.set_xticks(x)
     ax.set_xticklabels(list(periods.keys()), rotation=45, ha='right')
     ax.legend()
@@ -467,32 +474,35 @@ def plot_time_series(ax, counts, title, periods, period_colors):
     # Add vertical line at day 0 (dosing)
     ax.axvline(x=0, color='black', linestyle='--', alpha=0.7)
     
-    # Add period shading with distinct colors for each period
-    legend_handles = []
-    legend_labels = []
+    # Replace colored background with vertical lines at period boundaries
+    period_edges = sorted(set(edge for period, (start, end) in periods.items() for edge in [start, end]))
     
-    # Add the line plots to legend
-    legend_handles.extend([
-        plt.Line2D([0], [0], color='red', lw=2),
-        plt.Line2D([0], [0], color='blue', lw=2)
-    ])
-    legend_labels.extend(['High Deviations from Mean', 'Low Deviations from Mean'])
+    # Add vertical lines at period boundaries
+    for edge in period_edges:
+        if edge != 0:  # We already have a line at day 0
+            ax.axvline(x=edge, color='gray', linestyle=':', alpha=0.5)
     
-    # Add period shading with distinct colors - ensure exact match with periods
+    # Add text labels for periods
+    y_text_pos = ax.get_ylim()[1] * 0.9  # Position text near the top
     for period_name, (start, end) in periods.items():
-        span = ax.axvspan(start, end, alpha=0.3, 
-                         color=period_colors[period_name])
-        
-        # Add to legend
-        legend_handles.append(span)
-        legend_labels.append(period_name)
+        # Place text in the middle of the period
+        mid_point = (start + end) / 2
+        ax.text(mid_point, y_text_pos, period_name, 
+               ha='center', va='bottom', fontsize=12,
+               bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2))
     
     # Add labels
     ax.set_xlabel('Days Relative to Dosing')
     ax.set_ylabel('Frequency of Deviations from Mean')
-    ax.set_title(title)
+    ax.set_title(title, fontsize=16)
     
-    # Add legend
+    # Add legend with proper handles
+    legend_handles = [
+        plt.Line2D([0], [0], color='red', lw=2),
+        plt.Line2D([0], [0], color='blue', lw=2)
+    ]
+    legend_labels = ['High Deviations from Mean', 'Low Deviations from Mean']
+    
     ax.legend(legend_handles, legend_labels, loc='upper right', fontsize='small')
     ax.grid(True, alpha=0.3)
     
@@ -530,23 +540,30 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
     tuple
         Tuple containing the figure and axes
     """
-    # Create figure with 2x3 subplots and extra space on the right for legends
-    fig = plt.figure(figsize=(20, 10))
+    # Create figure with a more complex layout using GridSpec
+    fig = plt.figure(figsize=(20, 15))  # Increased figure height from 14 to 15
     
-    # Create a gridspec with 2 rows and 4 columns (last column for legends)
-    gs = fig.add_gridspec(2, 4, width_ratios=[1, 1, 1, 0.25])
+    # Create a gridspec with 4 rows - increase bottom legend row height
+    gs = fig.add_gridspec(4, 3, height_ratios=[1, 0.2, 1, 0.25], hspace=0.3)
     
     # Create axes for the plots
     axes = []
-    for row in range(2):
-        row_axes = []
-        for col in range(3):
-            row_axes.append(fig.add_subplot(gs[row, col]))
-        axes.append(row_axes)
     
-    # Create axes for the legends - position them a bit to the left
-    legend_ax_top = fig.add_subplot(gs[0, 3])
-    legend_ax_bottom = fig.add_subplot(gs[1, 3])
+    # Top row of plots (row 0)
+    top_row = []
+    for col in range(3):
+        top_row.append(fig.add_subplot(gs[0, col]))
+    axes.append(top_row)
+    
+    # Bottom row of plots (row 2)
+    bottom_row = []
+    for col in range(3):
+        bottom_row.append(fig.add_subplot(gs[2, col]))
+    axes.append(bottom_row)
+    
+    # Create legend axes - one in the middle (row 1), one at the bottom (row 3)
+    legend_ax_top = fig.add_subplot(gs[1, :])
+    legend_ax_bottom = fig.add_subplot(gs[3, :])
     
     # Turn off axes for legend subplots
     legend_ax_top.axis('off')
@@ -554,10 +571,10 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
     
     # Define distinct colors for each weekly period
     period_colors = {
-        'Week -2 (-14 to -7)': 'lightgray',
-        'Week -1 (-7 to 0)': 'lightgreen',
-        'Week +1 (0 to 7)': 'paleturquoise',
-        'Week +2 (7 to 14)': 'lavender'
+        'Week -2 \n(-14 to -7)': 'lightgray',
+        'Week -1 \n(-7 to 0)': 'lightgreen',
+        'Week +1 \n(0 to 7)': 'paleturquoise',
+        'Week +2 \n(7 to 14)': 'lavender'
     }
     
     # Modified plot_time_series function that doesn't add a legend
@@ -570,16 +587,34 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
         # Add vertical line at day 0 (dosing)
         ax.axvline(x=0, color='black', linestyle='--', alpha=0.7)
         
-        # Add period shading with distinct colors - ensure exact match with periods
-        for period_name, (start, end) in periods.items():
-            ax.axvspan(start, end, alpha=0.3, 
-                      color=period_colors[period_name])
+        # Replace colored background with vertical lines at period boundaries
+        period_edges = sorted(set(edge for period, (start, end) in periods.items() for edge in [start, end]))
         
-        # Add labels
-        ax.set_xlabel('Days Relative to Dosing')
-        ax.set_ylabel('Frequency of Deviations from Mean')
-        ax.set_title(title)
+        # Add vertical lines at period boundaries
+        for edge in period_edges:
+            if edge != 0:  # We already have a line at day 0
+                ax.axvline(x=edge, color='gray', linestyle=':', alpha=0.5)
+        
+        # Set y-axis limit to 8
+        ax.set_ylim(0, 8)
+        
+        # Add text labels for periods
+        y_text_pos = 7.2  # Position text near the top, but below the upper limit
+        for period_name, (start, end) in periods.items():
+            # Place text in the middle of the period
+            mid_point = (start + end) / 2
+            ax.text(mid_point, y_text_pos, period_name, 
+                   ha='center', va='bottom', fontsize=11,
+                   bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2))
+        
+        # Add labels with increased font sizes
+        ax.set_xlabel('Days Relative to Dosing', fontsize=14)
+        ax.set_ylabel('Frequency of Deviations from Mean', fontsize=14)
+        ax.set_title(title, fontsize=16)
         ax.grid(True, alpha=0.3)
+        
+        # Increase tick label font size
+        ax.tick_params(axis='both', which='major', labelsize=13)
         
         # Find and mark peak days
         high_peak_date = counts.loc[counts['SmoothedHigh'].idxmax(), 'RelativeDate']
@@ -630,8 +665,8 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
         add_error_bars(counts, [p for p in periods.values()], 'Low', x + width/2, 'darkblue')
         
         # Calculate pairwise comparisons for significance testing
-        high_comparisons = pairwise_comparisons(periods, 'High', counts)
-        low_comparisons = pairwise_comparisons(periods, 'Low', counts)
+        high_comparisons = pairwise_comparisons(periods, 'High', counts, title)
+        low_comparisons = pairwise_comparisons(periods, 'Low', counts, title)
         
         # Start significance lines at a consistent height relative to the maximum bar
         max_bar_height = max(max(high_means), max(low_means))
@@ -661,7 +696,7 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
                     
                 # Position the stars just above the line (reduced vertical offset)
                 ax.text((x[idx1] + x[idx2])/2 - width/2, y_pos - 0.1, 
-                       stars, ha='center', va='bottom', color='red')
+                       stars, ha='center', va='bottom', color='red', fontsize=13)  # Increased font size
                 
                 y_pos += line_spacing  # Use consistent spacing
         
@@ -688,7 +723,7 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
                     
                 # Position the stars just above the line (reduced vertical offset)
                 ax.text((x[idx1] + x[idx2])/2 + width/2, y_pos - 0.1, 
-                       stars, ha='center', va='bottom', color='blue')
+                       stars, ha='center', va='bottom', color='blue', fontsize=13)  # Increased font size
                 
                 y_pos += line_spacing  # Use consistent spacing
         
@@ -699,57 +734,50 @@ def plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_coun
         # Set consistent y-axis limits for all plots
         ax.set_ylim(0, max(6, max_y_pos))
         
-        # Finalize plot
-        ax.set_title(title)
-        ax.set_ylabel('Mean Frequency of Deviations from Mean')
+        # Finalize plot with increased font sizes
+        ax.set_title(title, fontsize=16)  # Increased from 14
+        ax.set_ylabel('Average Frequency of Deviations from Mean', fontsize=14)  # Increased from 12
         ax.set_xticks(x)
-        ax.set_xticklabels(list(periods.keys()), rotation=45, ha='right')
+        ax.set_xticklabels(list(periods.keys()), rotation=45, ha='right', fontsize=13)  # Increased from 11
+        
+        # Increase y-axis tick label font size
+        ax.tick_params(axis='y', which='major', labelsize=13)  # Increased from 11
     
     # Plot time series with consistent period shading
-    plot_time_series_no_legend(axes[0][0], pitch_counts, 'Pitch Deviations from Mean Around Dosing', periods, period_colors)
-    plot_time_series_no_legend(axes[0][1], jitter_counts, 'Jitter Deviations from Mean Around Dosing', periods, period_colors)
-    plot_time_series_no_legend(axes[0][2], shimmer_counts, 'Shimmer Deviations from Mean Around Dosing', periods, period_colors)
+    plot_time_series_no_legend(axes[0][0], pitch_counts, 'Pitch', periods, period_colors)
+    plot_time_series_no_legend(axes[0][1], jitter_counts, 'Jitter', periods, period_colors)
+    plot_time_series_no_legend(axes[0][2], shimmer_counts, 'Shimmer', periods, period_colors)
     
     # Plot bar comparisons with significance indicators
-    plot_bar_comparison_no_legend(axes[1][0], pitch_stats, 'Period Comparison of Pitch Variability', pitch_counts, periods)
-    plot_bar_comparison_no_legend(axes[1][1], jitter_stats, 'Period Comparison of Jitter Variability', jitter_counts, periods)
-    plot_bar_comparison_no_legend(axes[1][2], shimmer_stats, 'Period Comparison of Shimmer Variability', shimmer_counts, periods)
+    plot_bar_comparison_no_legend(axes[1][0], pitch_stats, 'Pitch', pitch_counts, periods)
+    plot_bar_comparison_no_legend(axes[1][1], jitter_stats, 'Jitter', jitter_counts, periods)
+    plot_bar_comparison_no_legend(axes[1][2], shimmer_stats, 'Shimmer', shimmer_counts, periods)
     
-    # Create legend for top row (time series)
-    # Create handles for the legend
+    # Create legend for top row (time series) - with thicker lines for better visibility
     line_handles = [
-        plt.Line2D([0], [0], color='red', lw=2, label='High Deviations from Mean'),
-        plt.Line2D([0], [0], color='blue', lw=2, label='Low Deviations from Mean')
+        plt.Line2D([0], [0], color='red', lw=3, label='High Deviations from Mean'),
+        plt.Line2D([0], [0], color='blue', lw=3, label='Low Deviations from Mean'),
+        plt.Line2D([0], [0], color='black', linestyle='--', alpha=0.7, lw=2, label='Dosing Day')
     ]
     
-    # Add period patches to the legend
-    patch_handles = []
-    for period_name, color in period_colors.items():
-        patch_handles.append(plt.Rectangle((0, 0), 1, 1, color=color, alpha=0.3, label=period_name))
+    # Add the legend to the middle row with increased font size
+    legend_ax_top.legend(handles=line_handles, loc='center', ncol=3, fontsize=14, frameon=False)
     
-    # Add the legend to the top row - moved slightly to the left
-    legend_ax_top.legend(handles=line_handles + patch_handles, loc='center', fontsize='medium')
-    
-    # Create legend for bottom row (bar charts)
-    # Create handles for the legend
+    # Create legend for bottom row with larger elements for better visibility
     bar_handles = [
         plt.Rectangle((0, 0), 1, 1, color='red', alpha=0.7, edgecolor='darkred', label='High Deviations from Mean'),
         plt.Rectangle((0, 0), 1, 1, color='blue', alpha=0.7, edgecolor='darkblue', label='Low Deviations from Mean')
     ]
     
-    # Add significance indicators to the legend
-    sig_handles = [
-        plt.Line2D([0], [0], color='black', lw=0, label='Significance:'),
-        plt.Line2D([0], [0], color='black', lw=0, label='* p < 0.05'),
-        plt.Line2D([0], [0], color='black', lw=0, label='** p < 0.01'),
-        plt.Line2D([0], [0], color='black', lw=0, label='*** p < 0.001')
-    ]
+    # Add the legend to the bottom row with increased font size and padding
+    legend_ax_bottom.legend(handles=bar_handles, loc='center', ncol=2, fontsize=14, 
+                            borderpad=2, labelspacing=1.2, frameon=False)
     
-    # Add the legend to the bottom row - moved slightly to the left
-    legend_ax_bottom.legend(handles=bar_handles + sig_handles, loc='center', fontsize='medium')
+    # Adjust spacing between all elements with more bottom padding
+    plt.subplots_adjust(top=0.9, bottom=0.12, left=0.1, right=0.9, hspace=0.3, wspace=0.2)
     
-    plt.tight_layout()
-    fig.suptitle('Temporal Evolution and Period Comparison of Vocal Deviations from Mean Relative to 5-MeO-DMT Dosing', fontsize=16, y=1.02)
+    fig.suptitle('Temporal Evolution and Period Comparison of Vocal Deviations from Mean Relative to 5-MeO-DMT Dosing', 
+                fontsize=20, y=0.95)
     
     return fig, axes
 
@@ -802,6 +830,9 @@ def analyze_vocal_dynamics(vocal_features_path, output_path=None):
     pitch_counts, jitter_counts, shimmer_counts = calculate_daily_deviation_counts(df)
     print("Daily deviation counts calculated.")
     
+    # Print peak days
+    print_peak_days(pitch_counts, jitter_counts, shimmer_counts)
+    
     # Calculate period statistics
     pitch_stats, periods = calculate_period_statistics(pitch_counts)
     jitter_stats, _ = calculate_period_statistics(jitter_counts)
@@ -810,23 +841,23 @@ def analyze_vocal_dynamics(vocal_features_path, output_path=None):
     
     # Perform pairwise comparisons
     pitch_comparisons = {
-        'High': pairwise_comparisons(periods, 'High', pitch_counts),
-        'Low': pairwise_comparisons(periods, 'Low', pitch_counts)
+        'High': pairwise_comparisons(periods, 'High', pitch_counts, "Pitch"),
+        'Low': pairwise_comparisons(periods, 'Low', pitch_counts, "Pitch")
     }
     jitter_comparisons = {
-        'High': pairwise_comparisons(periods, 'High', jitter_counts),
-        'Low': pairwise_comparisons(periods, 'Low', jitter_counts)
+        'High': pairwise_comparisons(periods, 'High', jitter_counts, "Jitter"),
+        'Low': pairwise_comparisons(periods, 'Low', jitter_counts, "Jitter")
     }
     shimmer_comparisons = {
-        'High': pairwise_comparisons(periods, 'High', shimmer_counts),
-        'Low': pairwise_comparisons(periods, 'Low', shimmer_counts)
+        'High': pairwise_comparisons(periods, 'High', shimmer_counts, "Shimmer"),
+        'Low': pairwise_comparisons(periods, 'Low', shimmer_counts, "Shimmer")
     }
     
     # Print detailed statistics
     print("\n=== DETAILED STATISTICAL TEST RESULTS ===\n")
-    print_detailed_statistics(pitch_comparisons, 'PITCH')
-    print_detailed_statistics(jitter_comparisons, 'JITTER')
-    print_detailed_statistics(shimmer_comparisons, 'SHIMMER')
+    print_detailed_statistics(pitch_comparisons, 'Pitch')
+    print_detailed_statistics(jitter_comparisons, 'Jitter')
+    print_detailed_statistics(shimmer_comparisons, 'Shimmer')
     
     # Plot results
     fig, axes = plot_multipanel_vocal_dynamics(df, pitch_counts, jitter_counts, shimmer_counts, 
@@ -840,14 +871,43 @@ def analyze_vocal_dynamics(vocal_features_path, output_path=None):
     
     return df, (pitch_counts, jitter_counts, shimmer_counts), (pitch_stats, jitter_stats, shimmer_stats)
 
+def print_peak_days(pitch_counts, jitter_counts, shimmer_counts):
+    """
+    Print the peak days for high and low deviations for each vocal feature.
+    
+    Parameters:
+    -----------
+    pitch_counts, jitter_counts, shimmer_counts : pandas.DataFrame
+        The dataframes with daily deviation counts
+    """
+    print("\n=== PEAK DAYS FOR VOCAL DEVIATIONS ===\n")
+    
+    # Function to get peak info
+    def get_peak_info(counts, feature_name):
+        high_peak_date = counts.loc[counts['SmoothedHigh'].idxmax(), 'RelativeDate']
+        high_peak_value = counts['SmoothedHigh'].max()
+        
+        low_peak_date = counts.loc[counts['SmoothedLow'].idxmax(), 'RelativeDate']
+        low_peak_value = counts['SmoothedLow'].max()
+        
+        print(f"{feature_name}:")
+        print(f"  High peak - Day {high_peak_date:+d} (value: {high_peak_value:.2f})")
+        print(f"  Low peak  - Day {low_peak_date:+d} (value: {low_peak_value:.2f})\n")
+    
+    # Print peaks for each feature
+    get_peak_info(pitch_counts, "Pitch")
+    get_peak_info(jitter_counts, "Jitter")
+    get_peak_info(shimmer_counts, "Shimmer")
+
 if __name__ == "__main__":
     # Example usage
-    vocal_features_path = "/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/vocal_features.csv"
+    CORE_DIR = "/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals"
+    vocal_features_path = f"{CORE_DIR}/data/processed/vocal_features.csv"
     
     # Run analysis
     df, anomaly_counts, test_results = analyze_vocal_dynamics(
         vocal_features_path,
-        output_path="vocal_dynamics_results.png"
+        output_path=f"{CORE_DIR}/outputs/figures/vocal_dynamics_results.png"
     )
 
-    df.to_csv("/Users/joannakuc/5-MeO-DMT-NLP-Acoustic-Analysis-of-Chatbot-Journals/data/processed/vocal_features_with_deviations.csv", index=False)
+    df.to_csv(f"{CORE_DIR}/data/processed/vocal_features_with_deviations.csv", index=False)

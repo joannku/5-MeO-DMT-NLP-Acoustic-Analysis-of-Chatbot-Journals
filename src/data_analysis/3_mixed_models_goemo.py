@@ -26,6 +26,12 @@ def filter_df(df):
     # Keep non-GoEmotion columns and GoEmotion columns
     non_goemo_cols = [col for col in df.columns if not col.startswith('goemo_')]
     df = df[non_goemo_cols + goemo_cols]
+
+    # Remove participant with Participant ID = PRO71
+    df = df[df['UserID'] != 'PRO71']
+
+    # only keep columns that are in -14, 15 range for RelativeDate
+    df = df[(df['RelativeDate'] >= -14) & (df['RelativeDate'] <= 14)]
     
     return df, goemo_cols
 

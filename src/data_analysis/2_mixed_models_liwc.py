@@ -15,6 +15,12 @@ def filter_df(df):
     # Keep non-LIWC columns and LIWC columns with mean > 1
     non_liwc_cols = [col for col in df.columns if not col.startswith('liwc_')]
     df = df[non_liwc_cols + liwc_cols]
+
+    # Remove participant with Participant ID = PRO71
+    df = df[df['UserID'] != 'PRO71']
+
+    # only keep columns that are in -14, 15 range for RelativeDate
+    df = df[(df['RelativeDate'] >= -14) & (df['RelativeDate'] <= 14)]
     
     return df, liwc_cols
 

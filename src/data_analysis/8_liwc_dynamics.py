@@ -185,10 +185,10 @@ def calculate_period_statistics(daily_usage_df, feature_col, agg_daily_df=None):
     """
     # Define periods as weekly ranges
     periods = {
-        'Week -2 (-14 to -7)': (-14, -7),
-        'Week -1 (-7 to 0)': (-7, 0),
-        'Week +1 (0 to 7)': (0, 7),
-        'Week +2 (7 to 14)': (7, 14)
+        'Week -2': (-14, -7),
+        'Week -1': (-7, 0),
+        'Week +1': (0, 7),
+        'Week +2': (7, 14)
     }
     
     # Filter out days with only one user if agg_daily_df is provided
@@ -410,6 +410,114 @@ def create_daily_stats_table(agg_daily_cog, agg_daily_social, output_path=None):
     
     return daily_stats
 
+def create_statistical_results_table(period_stats_cog, period_stats_social, comparisons_cog, comparisons_social, output_path=None):
+    """
+    Create a comprehensive table of statistical results for supplementary materials.
+    
+    Parameters:
+    -----------
+    period_stats_cog : dict
+        Dictionary with period statistics for cognitive words
+    period_stats_social : dict
+        Dictionary with period statistics for social words
+    comparisons_cog : list
+        List of dictionaries with comparison results for cognitive words
+    comparisons_social : list
+        List of dictionaries with comparison results for social words
+    output_path : str, optional
+        Path to save the output table
+        
+    Returns:
+    --------
+    tuple
+        Tuple containing two DataFrames (period stats and comparisons)
+    """
+    # Create period statistics DataFrame
+    period_stats_data = []
+    for period in period_stats_cog.keys():
+        period_stats_data.append({
+            'Period': period,
+            'Cognitive_Mean': period_stats_cog[period]['mean'],
+            'Cognitive_SE': period_stats_cog[period]['se'],
+            'Cognitive_N': period_stats_cog[period]['count'],
+            'Social_Mean': period_stats_social[period]['mean'],
+            'Social_SE': period_stats_social[period]['se'],
+            'Social_N': period_stats_social[period]['count']
+        })
+    
+    period_stats_df = pd.DataFrame(period_stats_data)
+    
+    # Create pairwise comparisons DataFrame
+    comparison_data = []
+    for cog, soc in zip(comparisons_cog, comparisons_social):
+        # Add significance notation for cognitive words
+        if cog['p-value-fdr'] < 0.001:
+            cog_sig = '***'
+        elif cog['p-value-fdr'] < 0.01:
+            cog_sig = '**'
+        elif cog['p-value-fdr'] < 0.05:
+            cog_sig = '*'
+        else:
+            cog_sig = 'ns'
+            
+        # Add significance notation for social words
+        if soc['p-value-fdr'] < 0.001:
+            soc_sig = '***'
+        elif soc['p-value-fdr'] < 0.01:
+            soc_sig = '**'
+        elif soc['p-value-fdr'] < 0.05:
+            soc_sig = '*'
+        else:
+            soc_sig = 'ns'
+            
+        comparison_data.append({
+            'Comparison': f"{cog['Period 1']} vs {cog['Period 2']}",
+            'Cognitive_t': cog['t-statistic'],
+            'Cognitive_p': cog['p-value'],
+            'Cognitive_p_FDR': cog['p-value-fdr'],
+            'Cognitive_Sig': cog_sig,
+            'Cognitive_Mean_Diff': cog['mean1'] - cog['mean2'],
+            'Social_t': soc['t-statistic'],
+            'Social_p': soc['p-value'],
+            'Social_p_FDR': soc['p-value-fdr'],
+            'Social_Sig': soc_sig,
+            'Social_Mean_Diff': soc['mean1'] - soc['mean2']
+        })
+    
+    comparisons_df = pd.DataFrame(comparison_data)
+    
+    # Reorder columns to put significance right after FDR p-values
+    comparisons_df = comparisons_df[[
+        'Comparison',
+        'Cognitive_t',
+        'Cognitive_p',
+        'Cognitive_p_FDR',
+        'Cognitive_Sig',
+        'Cognitive_Mean_Diff',
+        'Social_t',
+        'Social_p',
+        'Social_p_FDR',
+        'Social_Sig',
+        'Social_Mean_Diff'
+    ]]
+    
+    # Save as CSV files if output path is provided
+    if output_path:
+        # Create tables directory if it doesn't exist
+        tables_dir = os.path.join(os.path.dirname(output_path), '..', 'tables')
+        os.makedirs(tables_dir, exist_ok=True)
+        
+        # Save tables to the tables directory
+        tables_path = os.path.join(tables_dir, os.path.basename(output_path))
+        period_stats_df.to_csv(f"{tables_path}_period_statistics.csv", index=False)
+        comparisons_df.to_csv(f"{tables_path}_pairwise_comparisons.csv", index=False)
+        
+        print(f"\nStatistical results tables saved to:")
+        print(f"- {tables_path}_period_statistics.csv")
+        print(f"- {tables_path}_pairwise_comparisons.csv")
+    
+    return period_stats_df, comparisons_df
+
 def plot_combined_visualization(agg_daily_cog, agg_daily_social, periods, daily_cognition=None, 
                                daily_social=None, period_stats_cog=None, period_stats_social=None, 
                                comparisons_cog=None, comparisons_social=None, output_path=None):
@@ -553,12 +661,20 @@ def plot_combined_visualization(agg_daily_cog, agg_daily_social, periods, daily_
         if edge != 0:  # We already have a line at day 0
             ax_timeseries.axvline(x=edge, color='gray', linestyle=':', alpha=0.5)
     
-    # Add text labels for periods
+    # Add text labels for periods in the top figure
     y_text_pos = ax_timeseries.get_ylim()[1] * 0.9  # Position text near the top
+    full_period_labels = {
+        'Week -2': 'Week -2 (-14 to -7)',
+        'Week -1': 'Week -1 (-7 to 0)',
+        'Week +1': 'Week +1 (0 to 7)',
+        'Week +2': 'Week +2 (7 to 14)'
+    }
     for period_name, (start, end) in periods.items():
+        # Use the full label for the top figure
+        label = full_period_labels[period_name]
         # Place text in the middle of the period
         mid_point = (start + end) / 2
-        ax_timeseries.text(mid_point, y_text_pos, period_name, 
+        ax_timeseries.text(mid_point, y_text_pos, label, 
                           ha='center', va='bottom', fontsize=9,
                           bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2))
     
@@ -897,21 +1013,24 @@ def analyze_word_dynamics(sentence_level_path, output_path=None):
     print_detailed_statistics(comparisons_cog, 'Cognitive')
     print_detailed_statistics(comparisons_social, 'Social')
     
-    # Check if output directory exists, create if it doesn't
+    # Check if output directories exist, create if they don't
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        figures_dir = os.path.dirname(output_path)  # This should be outputs/figures
+        tables_dir = os.path.join(os.path.dirname(figures_dir), 'tables')
+        os.makedirs(figures_dir, exist_ok=True)
+        os.makedirs(tables_dir, exist_ok=True)
         
-    # Generate daily statistics table (independent of plots)
-    if output_path:
-        daily_stats = create_daily_stats_table(agg_daily_cog, agg_daily_social, output_path)
-        print(f"Daily statistics table created and saved to {output_path}_daily_stats.csv")
+        # Generate daily statistics table
+        tables_path = os.path.join(tables_dir, os.path.basename(output_path))
+        daily_stats = create_daily_stats_table(agg_daily_cog, agg_daily_social, tables_path)
+        print(f"Daily statistics table created and saved to {tables_path}_daily_stats.csv")
     else:
         daily_stats = create_daily_stats_table(agg_daily_cog, agg_daily_social)
     
     # Print the daily statistics table to the console
     print_daily_stats_table(daily_stats)
     
-    # Create the combined visualization
+    # Create the combined visualization (this goes to figures directory)
     fig, axes = plot_combined_visualization(
         agg_daily_cog, 
         agg_daily_social,
@@ -929,6 +1048,16 @@ def analyze_word_dynamics(sentence_level_path, output_path=None):
     
     if output_path:
         print(f"Combined figure saved to: {output_path}_combined_visualization.png")
+    
+    # Generate statistical results tables (these go to tables directory)
+    tables_path = os.path.join(tables_dir, os.path.basename(output_path))
+    period_stats_df, comparisons_df = create_statistical_results_table(
+        period_stats_cog,
+        period_stats_social,
+        comparisons_cog,
+        comparisons_social,
+        output_path=tables_path if output_path else None
+    )
     
     return df, (daily_cognition, daily_social), (
         (period_stats_cog, comparisons_cog), 
